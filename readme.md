@@ -1,41 +1,52 @@
 # Storypark Scraper
 
----
+This repository now archives Storypark story text and photos into local Markdown folders, tracks state in SQLite, and writes a Home Assistant friendly status JSON file.
 
-### What does this do?
-Simply downloads all story photos from your child's story posts in storypark to put into a photo album or other tool. Please note this indescriminately downloads images so you will need to filter out pictures your child is not in after download.
+## What it does
 
-### Installation & Run
+- Logs into Storypark with a persistent Playwright browser profile.
+- Discovers all children available to the authenticated account.
+- Downloads newly discovered story posts into `archive/<child>/<year>/<story_id>/`.
+- Stores story text in `story.md` with YAML front matter.
+- Applies denylist filtering for menu, newsletter, and reminder-style posts.
+- Tracks idempotent state in `state/state.sqlite`.
+- Writes run status to `status/status.json`.
+- Supports a per-run story cap and a delay between processed stories for safer first-pass testing.
 
-#### venv (easymode)
-Assuming you have installed python. You can run this on your machine by doing the following.
-1. Open your Terminal
-2. Run command: git clone https://github.com/AustralianSimon/storyparkScraper.git StoryParkScraper
-3. Run command: cd StoryParkScraper
-4. Run command: python -m venv venv
-5. Run command: venv\Scripts\activate.bat or source venv/bin/activate
-6. Run command: pip install -r requirements.txt
-7. Run command: python main.py
+## Local Windows setup
 
-#### docker
-NB - there is a known issue with docker atm so I recommend you run via venv.
+1. Run `pwsh -File .\scripts\bootstrap.ps1`.
+2. Store credentials with `.\.venv\Scripts\python.exe -m storypark_scraper --config .\config.yaml store-credentials --username you@example.com`.
+3. Edit `config.yaml` to tune filters, paths, throttling, and child allowlists.
+4. Run a first sync with `.\.venv\Scripts\python.exe -m storypark_scraper --config .\config.yaml run --full-scan --max-stories 3 --story-delay-seconds 2`.
+5. If the first pass looks right, remove the cap and run a broader sync.
+6. Register the daily scheduled task with `pwsh -File .\scripts\install_windows_task.ps1 -RunAt 03:00 -User YOURMACHINE\storypark-svc`.
 
-There is a dockerfile for those that like to build and run them. I will assume you know how to access your machine running docker.
-1. Open your Terminal
-2. Run command: git clone https://github.com/AustralianSimon/storyparkScraper.git StoryParkScraper
-3. Run command: cd StoryParkScraper
-4. Run command: sudo docker build -t storyparkscraper:latest .
-5. Run using docker-compose such as example in project.
+## Development fallback
 
-### .env file (optional)
-- Just create a .env file in the directory you clone the project to.
+You can still use `.env` for local development. Copy `example.env` to `.env` and set `SP_USER` and `SP_PASS`.
 
----
+## Runtime outputs
 
-### Contributors
+- Archive root: `archive/`
+- SQLite state: `state/state.sqlite`
+- Browser profile: `state/browser-profile`
+- Status JSON: `status/status.json`
 
-Written mostly in python by Simon Wise.
+## Home Assistant
 
----
+The first release writes a stable JSON payload with these fields:
 
-#### Open to pull requests
+- `state`
+- `last_run_started_at`
+- `last_run_finished_at`
+- `last_success_at`
+- `last_story_acquired_at`
+- `stories_seen`
+- `stories_downloaded`
+- `stories_skipped`
+- `last_error`
+
+## Docker
+
+Docker remains secondary. If you use it, mount `config.yaml`, `archive/`, `state/`, and `status/`, and provide credentials through `.env`.

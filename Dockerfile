@@ -1,6 +1,8 @@
-FROM python:3.12.7-slim-bullseye
+FROM python:3.12-slim
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libnss3 \
@@ -25,30 +27,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libasound2 \
     fonts-liberation \
-    libappindicator3-1 \
     xdg-utils \
-    wget \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser
-
-RUN pip install --upgrade pip
 WORKDIR /app
 
-# Add these debug lines
-RUN pwd && ls -la
+COPY requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && python -m playwright install chromium
 
-COPY --chown=appuser:appuser entrypoint.sh /entrypoint.sh
 COPY --chown=appuser:appuser . /app
+RUN chmod +x /app/entrypoint.sh
 
-RUN pip install --no-cache-dir -r /app/requirements.txt
-RUN python -m playwright install --with-deps chromium
-
-RUN pwd && ls -la && echo "Files in /:"
-RUN chmod +x /entrypoint.sh
-RUN bash -c 'if [ -f "entrypoint.sh" ]; then echo "entrypoint.sh exists"; else echo "entrypoint.sh not found"; fi'
-
-EXPOSE 8000
-CMD ["/bin/bash", "/entrypoint.sh"]
+USER appuser
+CMD ["/app/entrypoint.sh"]

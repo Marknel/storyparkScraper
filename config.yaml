@@ -1,0 +1,40 @@
+paths:
+  archive: archive
+  state_db: state/state.sqlite
+  status_file: status/status.json
+  browser_profile: state/browser-profile
+  lock_file: state/run.lock
+
+storypark:
+  login_url: https://app.storypark.com/users/sign_in
+  stories_url_template: https://app.storypark.com/children/{child_code}/stories
+  credential_target: storypark-scraper
+  child_allowlist: []
+
+filters:
+  exclude_keywords: []
+  exclude_regexes: []
+  exclude_authors: []
+  exclude_content_types: []
+  per_child: {}
+
+runtime:
+  page_timeout_ms: 60000
+  scroll_pause_ms: 5000
+  network_idle_timeout_ms: 120000
+  download_timeout_seconds: 30
+  recent_scroll_iterations: 3
+  stop_after_existing_stories: true
+  full_scan_on_first_run: true
+  story_delay_seconds: 0.0
+  max_stories_per_run: 0
+  schedule_hint: "03:00"
+
+classifier:
+  enabled: false
+  provider: noop
+
+google_photos:
+  enabled: false
+  upload_root: ""
+  album: ""
