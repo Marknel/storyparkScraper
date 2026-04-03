@@ -12,7 +12,7 @@ from storypark_scraper.downloader import AssetDownloader
 from storypark_scraper.filters import StoryFilter
 from storypark_scraper.google_photos import validate_google_photos_enabled
 from storypark_scraper.locking import acquire_run_lock
-from storypark_scraper.models import Credentials, FilterDecision, RunStats
+from storypark_scraper.models import ChildTarget, Credentials, FilterDecision, RunStats, StoryContent
 from storypark_scraper.state import StateStore, utc_now_iso
 from storypark_scraper.status import build_status_payload, write_status_file
 
@@ -43,7 +43,6 @@ class StoryparkApplication:
         max_stories_per_child: int | None = None,
         story_delay_seconds: float | None = None,
         disable_filters: bool = False,
-        stop_on_video: bool = False,
     ) -> int:
         self._config.ensure_directories()
         self._state.initialize()
@@ -51,7 +50,6 @@ class StoryparkApplication:
         latest_acquired_at: str | None = None
         run_id: str | None = None
         processed_story_count = 0
-        stop_run = False
 
         effective_max_stories = max_stories if max_stories is not None else self._config.runtime.max_stories_per_run
         if effective_max_stories is not None and effective_max_stories <= 0:
@@ -97,12 +95,12 @@ class StoryparkApplication:
                         "max_stories_per_child": effective_max_stories_per_child,
                         "story_delay_seconds": effective_story_delay,
                         "disable_filters": disable_filters,
-                        "stop_on_video": stop_on_video,
                     },
                 )
 
                 with StoryparkBrowser(self._config, credential_provider, self._logger) as browser:
                     children = browser.discover_children()
+                    known_child_aliases = _known_child_aliases(children)
                     for child in children:
                         stop_child_scan = False
                         processed_child_story_count = 0
@@ -121,7 +119,6 @@ class StoryparkApplication:
                         )
                         for story_id in story_ids:
                             if effective_max_stories is not None and processed_story_count >= effective_max_stories:
-                                stop_run = True
                                 self._logger.info(
                                     "Reached per-run story cap",
                                     extra={"max_stories": effective_max_stories},
@@ -154,9 +151,9 @@ class StoryparkApplication:
                             story = browser.fetch_story(child, story_id)
                             processed_story_count += 1
                             processed_child_story_count += 1
+                            story.google_photos_candidate = _is_google_photos_candidate(story, known_child_aliases)
                             story.semantic_labels = self._classifier.classify(story)
                             decision = _decide_story(self._filter, story, disable_filters)
-                            encountered_video = stop_on_video and story.has_video
 
                             if not decision.include:
                                 stats.stories_skipped += 1
@@ -199,18 +196,6 @@ class StoryparkApplication:
                                     },
                                 )
 
-                            if encountered_video:
-                                stop_run = True
-                                self._logger.info(
-                                    "Encountered video asset and stopped run",
-                                    extra={
-                                        "story_id": story.story_id,
-                                        "child_name": story.child_name,
-                                        "asset_count": len(story.assets),
-                                    },
-                                )
-                                break
-
                             if effective_story_delay > 0:
                                 should_continue_global = (
                                     effective_max_stories is None or processed_story_count < effective_max_stories
@@ -231,8 +216,6 @@ class StoryparkApplication:
                                 "Stopped child scan after existing story",
                                 extra={"child_name": child.name},
                             )
-                        if stop_run:
-                            break
 
                 self._state.finish_run(
                     run_id=run_id,
@@ -274,3 +257,28 @@ def _smallest_positive_limit(*values: int | None) -> int | None:
     if not candidates:
         return None
     return min(candidates)
+
+
+def _known_child_aliases(children: list[ChildTarget]) -> set[str]:
+    aliases: set[str] = set()
+    for child in children:
+        aliases.update(_child_name_aliases(child.name))
+    return aliases
+
+
+def _is_google_photos_candidate(story: StoryContent, known_child_aliases: set[str]) -> bool:
+    if not story.included_children:
+        return False
+    for included_child in story.included_children:
+        if not (_child_name_aliases(included_child) & known_child_aliases):
+            return False
+    return True
+
+
+def _child_name_aliases(name: str) -> set[str]:
+    cleaned = " ".join(name.split()).strip()
+    if not cleaned:
+        return set()
+    aliases = {cleaned.casefold()}
+    aliases.add(cleaned.split()[0].casefold())
+    return aliases

@@ -211,6 +211,7 @@ def parse_story_from_html(html: str, story_id: str, child_name: str, source_url:
     published_text = _extract_published_text(root)
     published_at = _normalize_story_date(published_text)
     author = _extract_author(root)
+    included_children = _extract_included_children(root)
     content_type = _extract_content_type(root)
     body = _extract_body_text(root, title, published_text, author)
     assets = _extract_assets(root, source_url)
@@ -226,6 +227,7 @@ def parse_story_from_html(html: str, story_id: str, child_name: str, source_url:
         author=author,
         content_type=content_type,
         assets=assets,
+        included_children=included_children,
     )
 
 
@@ -301,6 +303,46 @@ def _extract_author(root: HtmlNode) -> str:
             and any(segment in node.attr("href") for segment in ["/educators/", "/parents/"]),
         ],
     )
+
+
+def _extract_included_children(root: HtmlNode) -> list[str]:
+    explicit_names: list[str] = []
+    seen: set[str] = set()
+    for node in iter_nodes(root):
+        if "child-name-link" not in node.classes():
+            continue
+        text = node.text_content()
+        if not text or text in seen:
+            continue
+        explicit_names.append(text)
+        seen.add(text)
+    if explicit_names:
+        return explicit_names
+
+    header_title = _extract_story_header_title(root)
+    if not header_title:
+        return []
+    match = re.match(r"^(?:Individual|Group) Story for (.+)$", header_title)
+    if not match:
+        return []
+
+    names: list[str] = []
+    seen.clear()
+    for item in match.group(1).split(","):
+        name = _normalize_whitespace(item)
+        if not name or name in seen:
+            continue
+        names.append(name)
+        seen.add(name)
+    return names
+
+
+def _extract_story_header_title(root: HtmlNode) -> str:
+    for node in iter_nodes(root):
+        title = node.attr("title")
+        if title.startswith("Individual Story for ") or title.startswith("Group Story for "):
+            return title
+    return ""
 
 
 def _extract_content_type(root: HtmlNode) -> str:

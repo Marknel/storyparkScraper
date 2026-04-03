@@ -47,7 +47,7 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(len(story.assets), 2)
         self.assertEqual(story.assets[1].source_url, "https://app.storypark.com/media/image-2.jpg")
 
-    def test_parse_current_story_detail_extracts_author_and_date(self):
+    def test_parse_current_story_detail_extracts_author_date_and_explicit_children(self):
         html = (FIXTURE_ROOT / "story_detail_current.html").read_text(encoding="utf-8")
         story = parse_story_from_html(
             html,
@@ -60,7 +60,19 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(story.published_text, "30 March 2026")
         self.assertEqual(story.published_at, "2026-03-30")
         self.assertIn("Lyra has now settled comfortably", story.body)
+        self.assertEqual(story.included_children, ["Lyra Cracknell"])
         self.assertEqual(len(story.assets), 1)
+
+    def test_parse_group_story_detail_falls_back_to_header_child_list(self):
+        html = (FIXTURE_ROOT / "story_detail_group.html").read_text(encoding="utf-8")
+        story = parse_story_from_html(
+            html,
+            "105847745",
+            "Lyra Cracknell",
+            "https://app.storypark.com/stories/105847745/spa_show",
+        )
+        self.assertEqual(story.title, "Mud Kitchen")
+        self.assertEqual(story.included_children, ["Lyra", "Zoë", "Leo"])
 
     def test_parse_story_detail_extracts_video_assets(self):
         html = (FIXTURE_ROOT / "story_detail_video.html").read_text(encoding="utf-8")

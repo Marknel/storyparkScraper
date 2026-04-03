@@ -34,6 +34,8 @@ class ArchiveWriter:
             "asset_count": len(exported_assets),
             "author": story.author,
             "content_type": story.content_type,
+            "included_children": story.included_children,
+            "google_photos_candidate": story.google_photos_candidate,
             "semantic_labels": story.semantic_labels,
         }
         markdown_path = story_dir / "story.md"
@@ -49,6 +51,9 @@ def _render_markdown(front_matter: dict[str, object], story: StoryContent, asset
         body_parts.extend([f"Author: {story.author}", ""])
     if story.published_text:
         body_parts.extend([f"Published: {story.published_text}", ""])
+    if story.included_children:
+        body_parts.extend([f"Included Children: {', '.join(story.included_children)}", ""])
+    body_parts.extend([f"Google Photos Candidate: {'yes' if story.google_photos_candidate else 'no'}", ""])
     if story.body:
         body_parts.extend([story.body.strip(), ""])
 

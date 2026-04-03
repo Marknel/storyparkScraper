@@ -38,6 +38,8 @@ class StoryContent:
     author: str = ""
     content_type: str = "story"
     assets: list[StoryAsset] = field(default_factory=list)
+    included_children: list[str] = field(default_factory=list)
+    google_photos_candidate: bool = False
     semantic_labels: list[str] = field(default_factory=list)
 
     @property

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import shutil
 import unittest
 
@@ -54,11 +55,17 @@ class StateStatusTests(unittest.TestCase):
             store.finish_run(run_id, "success", stats, "2026-03-31T09:00:00+00:00", None)
 
             payload = build_status_payload(store)
+            story_row = store.connection.execute(
+                "SELECT included_children, google_photos_candidate FROM stories WHERE story_id = ? AND child_name = ?",
+                ("story-100", "Alice"),
+            ).fetchone()
 
             self.assertEqual(payload["state"], "success")
             self.assertEqual(payload["stories_downloaded"], 1)
             self.assertEqual(payload["last_story_acquired_at"], "2026-03-31T09:00:00+00:00")
             self.assertTrue(store.story_exists("story-100", "Alice"))
+            self.assertEqual(json.loads(story_row["included_children"]), [])
+            self.assertEqual(story_row["google_photos_candidate"], 0)
         finally:
             store.close()
 
@@ -77,6 +84,8 @@ class StateStatusTests(unittest.TestCase):
                     title="Shared Group Story",
                     body=f"Seen by {child_name}",
                     published_at="2026-03-30",
+                    included_children=["Lyra Cracknell", "Samuel Cracknell"],
+                    google_photos_candidate=True,
                 )
                 store.upsert_story(
                     story,
@@ -87,8 +96,16 @@ class StateStatusTests(unittest.TestCase):
                     downloaded_at="2026-03-31T09:00:00+00:00",
                 )
 
-            count = store.connection.execute("SELECT COUNT(*) AS value FROM stories WHERE story_id = ?", ("shared-story",)).fetchone()["value"]
+            count = store.connection.execute(
+                "SELECT COUNT(*) AS value FROM stories WHERE story_id = ?",
+                ("shared-story",),
+            ).fetchone()["value"]
+            candidate_count = store.connection.execute(
+                "SELECT COUNT(*) AS value FROM stories WHERE story_id = ? AND google_photos_candidate = 1",
+                ("shared-story",),
+            ).fetchone()["value"]
             self.assertEqual(count, 2)
+            self.assertEqual(candidate_count, 2)
             self.assertTrue(store.story_exists("shared-story", "Lyra"))
             self.assertTrue(store.story_exists("shared-story", "Samuel"))
         finally:

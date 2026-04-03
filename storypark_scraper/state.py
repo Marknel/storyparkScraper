@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
+import json
 import sqlite3
 import uuid
 
@@ -18,6 +19,8 @@ CREATE TABLE IF NOT EXISTS stories (
     source_url TEXT NOT NULL,
     author TEXT,
     content_type TEXT NOT NULL,
+    included_children TEXT NOT NULL DEFAULT '[]',
+    google_photos_candidate INTEGER NOT NULL DEFAULT 0,
     filter_decision TEXT NOT NULL,
     filter_reason TEXT NOT NULL,
     archive_path TEXT,
@@ -78,6 +81,7 @@ class StateStore:
         self._migrate_schema_if_needed()
         self.connection.executescript(STORIES_TABLE_SQL)
         self.connection.executescript(ASSETS_TABLE_SQL)
+        self._ensure_story_columns()
         self.connection.commit()
 
     def close(self) -> None:
@@ -156,21 +160,25 @@ class StateStore:
     ) -> None:
         now = utc_now_iso()
         body_hash = hashlib.sha256(story.searchable_text.encode("utf-8")).hexdigest()
+        included_children = json.dumps(story.included_children, ensure_ascii=False)
         labels = ",".join(story.semantic_labels)
         self.connection.execute(
             """
             INSERT INTO stories(
                 story_id, child_name, title, published_at, source_url, author, content_type,
-                filter_decision, filter_reason, archive_path, asset_count, body_hash,
-                first_seen_at, last_seen_at, last_run_id, last_downloaded_at, semantic_labels
+                included_children, google_photos_candidate, filter_decision, filter_reason,
+                archive_path, asset_count, body_hash, first_seen_at, last_seen_at,
+                last_run_id, last_downloaded_at, semantic_labels
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(story_id, child_name) DO UPDATE SET
                 title = excluded.title,
                 published_at = excluded.published_at,
                 source_url = excluded.source_url,
                 author = excluded.author,
                 content_type = excluded.content_type,
+                included_children = excluded.included_children,
+                google_photos_candidate = excluded.google_photos_candidate,
                 filter_decision = excluded.filter_decision,
                 filter_reason = excluded.filter_reason,
                 archive_path = excluded.archive_path,
@@ -189,6 +197,8 @@ class StateStore:
                 story.source_url,
                 story.author,
                 story.content_type,
+                included_children,
+                1 if story.google_photos_candidate else 0,
                 decision.label,
                 decision.reason,
                 archive_path,
@@ -265,6 +275,8 @@ class StateStore:
                 source_url TEXT NOT NULL,
                 author TEXT,
                 content_type TEXT NOT NULL,
+                included_children TEXT NOT NULL DEFAULT '[]',
+                google_photos_candidate INTEGER NOT NULL DEFAULT 0,
                 filter_decision TEXT NOT NULL,
                 filter_reason TEXT NOT NULL,
                 archive_path TEXT,
@@ -279,12 +291,13 @@ class StateStore:
             );
             INSERT INTO stories_v2(
                 story_id, child_name, title, published_at, source_url, author, content_type,
-                filter_decision, filter_reason, archive_path, asset_count, body_hash,
-                first_seen_at, last_seen_at, last_run_id, last_downloaded_at, semantic_labels
+                included_children, google_photos_candidate, filter_decision, filter_reason,
+                archive_path, asset_count, body_hash, first_seen_at, last_seen_at,
+                last_run_id, last_downloaded_at, semantic_labels
             )
             SELECT
                 story_id, child_name, title, published_at, source_url, author, content_type,
-                filter_decision, filter_reason, archive_path, asset_count, body_hash,
+                '[]', 0, filter_decision, filter_reason, archive_path, asset_count, body_hash,
                 first_seen_at, last_seen_at, last_run_id, last_downloaded_at, semantic_labels
             FROM stories;
             DROP TABLE stories;
@@ -327,6 +340,17 @@ class StateStore:
             """
         )
         self.connection.commit()
+
+    def _ensure_story_columns(self) -> None:
+        columns = self._table_columns("stories")
+        if "included_children" not in columns:
+            self.connection.execute(
+                "ALTER TABLE stories ADD COLUMN included_children TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "google_photos_candidate" not in columns:
+            self.connection.execute(
+                "ALTER TABLE stories ADD COLUMN google_photos_candidate INTEGER NOT NULL DEFAULT 0"
+            )
 
     def _table_exists(self, name: str) -> bool:
         row = self.connection.execute(

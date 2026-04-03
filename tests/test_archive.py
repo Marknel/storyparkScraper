@@ -41,6 +41,8 @@ class ArchiveTests(unittest.TestCase):
             published_at="2026-03-21",
             published_text="21 March 2026",
             author="Ms Carter",
+            included_children=["Alice Smith"],
+            google_photos_candidate=True,
             assets=[
                 StoryAsset(source_url="https://cdn.example.com/image-1.jpg", kind="image"),
                 StoryAsset(source_url="https://cdn.example.com/video-1.mp4", kind="video"),
@@ -56,7 +58,11 @@ class ArchiveTests(unittest.TestCase):
 
         self.assertTrue(result.story_markdown_path.exists())
         self.assertIn("storypark_id: story-100", markdown)
+        self.assertIn("included_children:", markdown)
+        self.assertIn("google_photos_candidate: true", markdown)
         self.assertIn("# Beach Day", markdown)
+        self.assertIn("Included Children: Alice Smith", markdown)
+        self.assertIn("Google Photos Candidate: yes", markdown)
         self.assertIn("![asset-01.jpg](media/asset-01.jpg)", markdown)
         self.assertIn("## Videos", markdown)
         self.assertIn("[asset-02.mp4](media/asset-02.mp4)", markdown)

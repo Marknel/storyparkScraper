@@ -49,11 +49,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Archive stories without applying the configured exclude filters",
     )
-    run_parser.add_argument(
-        "--stop-on-video",
-        action="store_true",
-        help="Stop the run after the first story containing a video asset is encountered",
-    )
     run_parser.add_argument("--log-level", default="INFO", help="Logging level")
 
     credential_parser = subparsers.add_parser(
@@ -112,5 +107,4 @@ def main(argv: list[str] | None = None) -> int:
         max_stories_per_child=args.max_stories_per_child,
         story_delay_seconds=args.story_delay_seconds,
         disable_filters=args.disable_filters,
-        stop_on_video=args.stop_on_video,
     )

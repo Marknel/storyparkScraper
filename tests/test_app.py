@@ -7,7 +7,7 @@ import shutil
 import unittest
 from unittest.mock import patch
 
-from storypark_scraper.app import StoryparkApplication
+from storypark_scraper.app import StoryparkApplication, _is_google_photos_candidate
 from storypark_scraper.models import ChildTarget, Credentials, ExportResult, StoryAsset, StoryContent
 
 
@@ -59,6 +59,7 @@ class FakeBrowser:
             body="A normal story body.",
             published_at="2026-03-31",
             assets=assets,
+            included_children=["Alice"],
         )
 
 
@@ -129,57 +130,50 @@ google_photos:
         self.assertEqual(status_payload["stories_seen"], 3)
         self.assertEqual(status_payload["state"], "success")
 
-    def test_run_stops_after_first_video_story(self):
-        root = prepare_case_dir("app-video-stop")
-        config_path = root / "config.yaml"
-        config_path.write_text(
-            """
-paths:
-  archive: archive
-  state_db: state/state.sqlite
-  status_file: status/status.json
-  browser_profile: state/browser-profile
-  lock_file: state/run.lock
-storypark:
-  credential_target: demo-target
-filters:
-  exclude_keywords: []
-  exclude_regexes: []
-  exclude_authors: []
-  exclude_content_types: []
-  per_child: {}
-runtime:
-  full_scan_on_first_run: true
-  stop_after_existing_stories: true
-  story_delay_seconds: 0.0
-  max_stories_per_run: 0
-classifier:
-  enabled: false
-google_photos:
-  enabled: false
-""".strip(),
-            encoding="utf-8",
+    def test_google_photos_candidate_requires_story_children_to_be_subset_of_known_children(self):
+        self.assertTrue(
+            _is_google_photos_candidate(
+                StoryContent(
+                    story_id="story-1",
+                    child_name="Lyra Cracknell",
+                    source_url="https://app.storypark.com/stories/story-1",
+                    included_children=["Lyra"],
+                ),
+                {"lyra", "lyra cracknell", "samuel", "samuel cracknell"},
+            )
         )
-
-        logger = logging.getLogger("storypark_scraper.test.video")
-        logger.handlers.clear()
-        logger.addHandler(logging.NullHandler())
-        logger.setLevel(logging.INFO)
-
-        with patch("storypark_scraper.app.StoryparkBrowser", FakeBrowser), patch(
-            "storypark_scraper.app.load_credentials",
-            return_value=Credentials(username="user", password="pass", source="test"),
-        ), patch("storypark_scraper.app.time.sleep") as sleep_mock:
-            app = StoryparkApplication(config_path, logger)
-            app._archive_writer = FakeArchiveWriter(root / "archive")
-            result = app.run(full_scan=True, stop_on_video=True, story_delay_seconds=2.0)
-
-        self.assertEqual(result, 0)
-        self.assertEqual(sleep_mock.call_count, 1)
-        status_payload = json.loads((root / "status" / "status.json").read_text(encoding="utf-8"))
-        self.assertEqual(status_payload["stories_downloaded"], 2)
-        self.assertEqual(status_payload["stories_seen"], 2)
-        self.assertEqual(status_payload["state"], "success")
+        self.assertTrue(
+            _is_google_photos_candidate(
+                StoryContent(
+                    story_id="story-2",
+                    child_name="Lyra Cracknell",
+                    source_url="https://app.storypark.com/stories/story-2",
+                    included_children=["Lyra Cracknell", "Samuel"],
+                ),
+                {"lyra", "lyra cracknell", "samuel", "samuel cracknell"},
+            )
+        )
+        self.assertFalse(
+            _is_google_photos_candidate(
+                StoryContent(
+                    story_id="story-3",
+                    child_name="Lyra Cracknell",
+                    source_url="https://app.storypark.com/stories/story-3",
+                    included_children=["Lyra", "Zoë"],
+                ),
+                {"lyra", "lyra cracknell", "samuel", "samuel cracknell"},
+            )
+        )
+        self.assertFalse(
+            _is_google_photos_candidate(
+                StoryContent(
+                    story_id="story-4",
+                    child_name="Lyra Cracknell",
+                    source_url="https://app.storypark.com/stories/story-4",
+                ),
+                {"lyra", "lyra cracknell", "samuel", "samuel cracknell"},
+            )
+        )
 
 
 if __name__ == "__main__":
