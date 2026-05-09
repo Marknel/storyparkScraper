@@ -249,6 +249,27 @@ class StateStore:
         ).fetchone()
         return row["value"] if row else None
 
+    def get_child_stats(self) -> dict[str, dict[str, int | float]]:
+        query = """
+        SELECT 
+            s.child_name, 
+            COUNT(DISTINCT s.story_id) AS total_stories, 
+            COUNT(DISTINCT CASE WHEN s.google_photos_candidate = 1 THEN s.story_id END) AS google_photos_suitable_stories, 
+            SUM(CASE WHEN s.google_photos_candidate = 1 AND a.kind = 'image' THEN 1 ELSE 0 END) AS google_photos_suitable_pictures 
+        FROM stories s 
+        LEFT JOIN assets a ON s.story_id = a.story_id AND s.child_name = a.child_name 
+        GROUP BY s.child_name
+        """
+        rows = self.connection.execute(query).fetchall()
+        result = {}
+        for r in rows:
+            stats = dict(r)
+            child_name = stats.pop("child_name")
+            avg = stats['google_photos_suitable_pictures'] / stats['google_photos_suitable_stories'] if stats['google_photos_suitable_stories'] > 0 else 0
+            stats['google_photos_suitable_pictures_average'] = round(avg, 2)
+            result[child_name] = stats
+        return result
+
     @property
     def connection(self) -> sqlite3.Connection:
         if self._connection is None:

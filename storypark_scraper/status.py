@@ -28,6 +28,7 @@ def build_status_payload(
         else (latest_run["stories_downloaded"] if latest_run else 0),
         "stories_skipped": stats.stories_skipped if stats else (latest_run["stories_skipped"] if latest_run else 0),
         "last_error": last_error if last_error is not None else (latest_run["last_error"] if latest_run else None),
+        "children": state_store.get_child_stats(),
     }
     return payload
 
