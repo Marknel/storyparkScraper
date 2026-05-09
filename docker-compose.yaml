@@ -12,3 +12,17 @@ services:
       - ./state:/app/state
       - ./status:/app/status
     working_dir: /app
+
+  storypark-web:
+    build: .
+    container_name: storypark-web
+    env_file:
+      - .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./state:/app/state
+      - ./status:/app/status
+    ports:
+      - "8082:8082"
+    working_dir: /app
+    command: ["python", "-m", "storypark_scraper", "--config", "/app/config.yaml", "serve", "--port", "8082"]

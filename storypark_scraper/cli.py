@@ -62,6 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Credential target name override; defaults to storypark.credential_target from config.yaml",
     )
 
+    serve_parser = subparsers.add_parser("serve", help="Run a basic webserver to expose the status JSON")
+    serve_parser.add_argument("--port", type=int, default=8082, help="Port to listen on (default: 8082)")
+
     subparsers.add_parser("status", help="Print the current status payload derived from SQLite state")
     return parser
 
@@ -87,6 +90,10 @@ def main(argv: list[str] | None = None) -> int:
             if outcome.warning:
                 print(f"Credential Manager storage failed first: {outcome.warning}")
         return 0
+
+    if args.command == "serve":
+        from storypark_scraper.webserver import run_webserver
+        return run_webserver(config_path, port=args.port)
 
     if args.command == "status":
         config = load_config(config_path)
