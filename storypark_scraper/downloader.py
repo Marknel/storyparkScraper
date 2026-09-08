@@ -34,6 +34,16 @@ class AssetDownloader:
             self._session.close()
             self._session = None
 
+    def set_cookies(self, cookies: list[dict]) -> None:
+        session = self._get_session()
+        for cookie in cookies:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            domain = cookie.get("domain")
+            path = cookie.get("path", "/")
+            if name and value:
+                session.cookies.set(name, value, domain=domain, path=path)
+
     def download(self, asset: StoryAsset, target_dir: Path, index: int, story_source_url: str) -> Path:
         session = self._get_session()
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -47,10 +57,25 @@ class AssetDownloader:
             response.headers.get("Content-Type"),
         )
         destination = target_dir / filename
-        with destination.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 64):
-                if chunk:
-                    handle.write(chunk)
+        if destination.exists():
+            stem = destination.stem
+            suffix = destination.suffix
+            destination = target_dir / f"{stem}-{index:02d}{suffix}"
+
+        temp_destination = destination.with_name(f"{destination.name}.{index}.tmp")
+        try:
+            with temp_destination.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 64):
+                    if chunk:
+                        handle.write(chunk)
+            os.replace(temp_destination, destination)
+        except Exception:
+            if temp_destination.exists():
+                try:
+                    temp_destination.unlink()
+                except OSError:
+                    pass
+            raise
         return destination
 
     def _get_session(self):

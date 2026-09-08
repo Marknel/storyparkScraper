@@ -175,6 +175,68 @@ google_photos:
             )
         )
 
+    def test_consecutive_existing_threshold_continues_past_isolated_existing_story(self):
+        root = prepare_case_dir("app_threshold")
+        config_path = root / "config.yaml"
+        config_path.write_text(
+            """
+paths:
+  archive: archive
+  state_db: state/state.sqlite
+  status_file: status/status.json
+  browser_profile: state/browser-profile
+  lock_file: state/run.lock
+storypark:
+  credential_target: demo-target
+filters:
+  exclude_keywords: []
+runtime:
+  full_scan_on_first_run: false
+  stop_after_existing_stories: true
+  consecutive_existing_stories_threshold: 2
+  story_delay_seconds: 0.0
+""".strip(),
+            encoding="utf-8",
+        )
+
+        logger = logging.getLogger("storypark_scraper.test")
+        logger.handlers.clear()
+        logger.addHandler(logging.NullHandler())
+
+        from storypark_scraper.state import StateStore
+        from storypark_scraper.models import FilterDecision
+
+        # Pre-seed story-1 in state database
+        store = StateStore(root / "state" / "state.sqlite")
+        store.initialize()
+        run_id = store.start_run()
+        store.upsert_story(
+            StoryContent(story_id="story-1", child_name="Alice", source_url="https://app.storypark.com/stories/story-1"),
+            run_id,
+            FilterDecision(include=True, reason="seed"),
+            archive_path="archive/Alice/2026/story-1/story.md",
+            assets=[],
+            downloaded_at="2026-01-01T00:00:00Z",
+        )
+        from storypark_scraper.models import RunStats
+        store.finish_run(run_id, "success", RunStats(), None, None)
+        store.close()
+
+        with patch("storypark_scraper.app.StoryparkBrowser", FakeBrowser), patch(
+            "storypark_scraper.app.load_credentials",
+            return_value=Credentials(username="user", password="pass", source="test"),
+        ):
+            app = StoryparkApplication(config_path, logger)
+            app._archive_writer = FakeArchiveWriter(root / "archive")
+            result = app.run()
+
+        self.assertEqual(result, 0)
+        status_payload = json.loads((root / "status" / "status.json").read_text(encoding="utf-8"))
+        # story-1 was skipped, but story-2, story-3, story-4 were processed
+        # story-2 was downloaded (3 new stories downloaded)
+        self.assertGreater(status_payload["stories_downloaded"], 0)
+        self.assertEqual(status_payload["stories_downloaded"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

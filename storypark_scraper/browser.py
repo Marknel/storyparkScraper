@@ -45,6 +45,11 @@ class StoryparkBrowser:
         self._page.set_default_timeout(self._config.runtime.page_timeout_ms)
         return self
 
+    def get_cookies(self) -> list[dict]:
+        if self._context is not None:
+            return self._context.cookies()
+        return []
+
     def __exit__(self, exc_type, exc, tb):
         if self._context is not None:
             self._context.close()
@@ -54,8 +59,15 @@ class StoryparkBrowser:
     def discover_children(self) -> list[ChildTarget]:
         self._ensure_authenticated()
         self._page.goto(self._config.storypark.login_url)
-        self._page.locator(MAIN_MENU_SELECTOR).first.click()
-        self._page.wait_for_timeout(1500)
+        menu_button = self._page.locator(MAIN_MENU_SELECTOR).first
+        menu_button.wait_for(state="visible", timeout=self._config.runtime.page_timeout_ms)
+        menu_button.click()
+        try:
+            self._page.locator(CHILD_MENU_SELECTOR).first.wait_for(
+                state="visible", timeout=5000
+            )
+        except Exception:
+            pass
 
         children = self._discover_children_from_menu()
         if not children:
@@ -78,6 +90,7 @@ class StoryparkBrowser:
         stable_rounds = 0
         iteration = 0
         max_iterations = 50 if full_scan else max(1, self._config.runtime.recent_scroll_iterations)
+        target_stable_rounds = max(1, self._config.runtime.scroll_stable_rounds)
 
         while iteration < max_iterations:
             story_ids = parse_story_ids_from_html(self._page.content())
@@ -88,7 +101,7 @@ class StoryparkBrowser:
                 stable_rounds += 1
             else:
                 stable_rounds = 0
-            if stable_rounds >= 1:
+            if stable_rounds >= target_stable_rounds:
                 break
             last_count = current_count
             iteration += 1
@@ -160,9 +173,14 @@ class StoryparkBrowser:
         self._page.fill(USERNAME_SELECTOR, credentials.username)
         self._page.fill(PASSWORD_SELECTOR, credentials.password)
         self._page.click(SUBMIT_SELECTOR)
-        self._page.wait_for_timeout(2000)
+        try:
+            self._page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
         if self._is_login_page():
-            raise RuntimeError("Storypark login did not complete successfully")
+            self._page.wait_for_timeout(2000)
+            if self._is_login_page():
+                raise RuntimeError("Storypark login did not complete successfully")
 
     def _is_login_page(self) -> bool:
         try:

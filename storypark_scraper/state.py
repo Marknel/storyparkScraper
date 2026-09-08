@@ -60,9 +60,13 @@ class StateStore:
 
     def initialize(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self._path)
+        self._connection = sqlite3.connect(self._path, timeout=10.0)
         self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA journal_mode=WAL")
+        self._connection.execute("PRAGMA busy_timeout=10000")
+        try:
+            self._connection.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            self._connection.execute("PRAGMA journal_mode=DELETE")
         self.connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS runs (
@@ -82,6 +86,15 @@ class StateStore:
         self.connection.executescript(STORIES_TABLE_SQL)
         self.connection.executescript(ASSETS_TABLE_SQL)
         self._ensure_story_columns()
+        self.connection.execute(
+            """
+            UPDATE runs
+            SET state = 'interrupted',
+                finished_at = started_at,
+                last_error = 'Process terminated unexpectedly'
+            WHERE state = 'running' AND finished_at IS NULL
+            """
+        )
         self.connection.commit()
 
     def close(self) -> None:
@@ -255,7 +268,7 @@ class StateStore:
             s.child_name, 
             COUNT(DISTINCT s.story_id) AS total_stories, 
             COUNT(DISTINCT CASE WHEN s.google_photos_candidate = 1 THEN s.story_id END) AS google_photos_suitable_stories, 
-            SUM(CASE WHEN s.google_photos_candidate = 1 AND a.kind = 'image' THEN 1 ELSE 0 END) AS google_photos_suitable_pictures 
+            COALESCE(SUM(CASE WHEN s.google_photos_candidate = 1 AND a.kind = 'image' THEN 1 ELSE 0 END), 0) AS google_photos_suitable_pictures 
         FROM stories s 
         LEFT JOIN assets a ON s.story_id = a.story_id AND s.child_name = a.child_name 
         GROUP BY s.child_name
@@ -265,7 +278,9 @@ class StateStore:
         for r in rows:
             stats = dict(r)
             child_name = stats.pop("child_name")
-            avg = stats['google_photos_suitable_pictures'] / stats['google_photos_suitable_stories'] if stats['google_photos_suitable_stories'] > 0 else 0
+            pics = stats.get('google_photos_suitable_pictures') or 0
+            suitable_stories = stats.get('google_photos_suitable_stories') or 0
+            avg = pics / suitable_stories if suitable_stories > 0 else 0
             stats['google_photos_suitable_pictures_average'] = round(avg, 2)
             result[child_name] = stats
         return result

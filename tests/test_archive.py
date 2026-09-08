@@ -69,6 +69,31 @@ class ArchiveTests(unittest.TestCase):
         self.assertFalse((stale_media_dir / "stale-file").exists())
         self.assertEqual(result.asset_count, 2)
 
+    def test_export_story_failure_preserves_existing_media(self):
+        archive_root = prepare_case_dir("archive_fail")
+        
+        class FailingDownloader:
+            def download(self, asset, target_dir, index, story_source_url):
+                raise RuntimeError("Network disconnect mid-download")
+
+        writer = ArchiveWriter(archive_root, FailingDownloader())
+        story = StoryContent(
+            story_id="story-101",
+            child_name="Alice Smith",
+            source_url="https://app.storypark.com/stories/story-101",
+            assets=[StoryAsset(source_url="https://cdn.example.com/image-1.jpg", kind="image")],
+        )
+        existing_media_dir = archive_root / "Alice Smith" / "unknown" / "story-101" / "media"
+        existing_media_dir.mkdir(parents=True, exist_ok=True)
+        canary = existing_media_dir / "important-photo.jpg"
+        canary.write_bytes(b"precious-photo")
+
+        with self.assertRaises(RuntimeError):
+            writer.export_story(story, FilterDecision(include=True, reason="accepted"), "2026-03-31T09:00:00Z")
+
+        self.assertTrue(canary.exists())
+        self.assertEqual(canary.read_bytes(), b"precious-photo")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,8 @@ runtime:
   download_timeout_seconds: 30
   recent_scroll_iterations: 3
   stop_after_existing_stories: true
+  consecutive_existing_stories_threshold: 5
+  scroll_stable_rounds: 3
   full_scan_on_first_run: true
   story_delay_seconds: 0.0
   max_stories_per_run: 0

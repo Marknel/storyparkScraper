@@ -54,6 +54,8 @@ class RuntimeConfig:
     full_scan_on_first_run: bool = True
     story_delay_seconds: float = 0.0
     max_stories_per_run: int = 0
+    consecutive_existing_stories_threshold: int = 5
+    scroll_stable_rounds: int = 3
     user_agent: str = DEFAULT_USER_AGENT
     schedule_hint: str = "03:00"
 
@@ -138,6 +140,10 @@ def load_config(path: Path) -> AppConfig:
             full_scan_on_first_run=_as_bool(runtime.get("full_scan_on_first_run", True)),
             story_delay_seconds=float(runtime.get("story_delay_seconds", 0.0)),
             max_stories_per_run=int(runtime.get("max_stories_per_run", 0)),
+            consecutive_existing_stories_threshold=int(
+                runtime.get("consecutive_existing_stories_threshold", 5)
+            ),
+            scroll_stable_rounds=int(runtime.get("scroll_stable_rounds", 3)),
             user_agent=str(runtime.get("user_agent", DEFAULT_USER_AGENT)),
             schedule_hint=str(runtime.get("schedule_hint", "03:00")),
         ),

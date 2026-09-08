@@ -99,11 +99,19 @@ class StoryparkApplication:
                 )
 
                 with StoryparkBrowser(self._config, credential_provider, self._logger) as browser:
+                    if hasattr(browser, "get_cookies"):
+                        cookies = browser.get_cookies()
+                        if cookies:
+                            self._downloader.set_cookies(cookies)
                     children = browser.discover_children()
                     known_child_aliases = _known_child_aliases(children)
+                    existing_threshold = max(
+                        1, self._config.runtime.consecutive_existing_stories_threshold
+                    )
                     for child in children:
                         stop_child_scan = False
                         processed_child_story_count = 0
+                        consecutive_existing_count = 0
                         remaining_global = None
                         if effective_max_stories is not None:
                             remaining_global = max(effective_max_stories - processed_story_count, 0)
@@ -139,15 +147,23 @@ class StoryparkApplication:
 
                             stats.stories_seen += 1
                             if not reprocess_existing and self._state.story_exists(story_id, child.name):
+                                consecutive_existing_count += 1
                                 self._logger.info(
                                     "Encountered existing story",
-                                    extra={"story_id": story_id, "child_name": child.name},
+                                    extra={
+                                        "story_id": story_id,
+                                        "child_name": child.name,
+                                        "consecutive_existing": consecutive_existing_count,
+                                        "threshold": existing_threshold,
+                                    },
                                 )
                                 if not effective_full_scan and self._config.runtime.stop_after_existing_stories:
-                                    stop_child_scan = True
-                                    break
+                                    if consecutive_existing_count >= existing_threshold:
+                                        stop_child_scan = True
+                                        break
                                 continue
 
+                            consecutive_existing_count = 0
                             story = browser.fetch_story(child, story_id)
                             processed_story_count += 1
                             processed_child_story_count += 1
