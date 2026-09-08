@@ -11,10 +11,13 @@ import shutil
 import subprocess
 from typing import Optional
 
+import warnings
+
 from storypark_scraper.models import Credentials
 
 
 GENERIC_CREDENTIAL_TYPE = 1
+CRED_PERSIST_LOCAL_MACHINE = 2
 ERROR_NOT_FOUND = 1168
 CRYPTPROTECT_LOCAL_MACHINE = 0x4
 
@@ -85,6 +88,13 @@ def load_credentials(root_dir: Path, credential_target: str, sources: Credential
     username = env.get(sources.username_env) or os.getenv(sources.username_env)
     password = env.get(sources.password_env) or os.getenv(sources.password_env)
     if username and password:
+        warnings.warn(
+            "Storypark credentials were loaded from plaintext .env file. "
+            "To improve security, store them in Windows Credential Manager using "
+            f"`python -m storypark_scraper store-credentials --username {username}` and remove {sources.password_env} from .env.",
+            UserWarning,
+            stacklevel=2,
+        )
         return Credentials(username=username, password=password, source="dotenv/env")
     raise CredentialError(
         "No Storypark credentials found. Store them in Windows Credential Manager or in the encrypted local "
@@ -110,19 +120,40 @@ def store_windows_credentials(target: str, username: str, password: str) -> None
     if os.name != "nt":
         raise CredentialError("Windows Credential Manager is only available on Windows")
 
-    cmdkey = shutil.which("cmdkey.exe")
-    if not cmdkey:
-        raise CredentialError("cmdkey.exe was not found on this Windows host")
+    advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+    cred_write = advapi32.CredWriteW
+    cred_write.argtypes = [ctypes.POINTER(CREDENTIALW), wintypes.DWORD]
+    cred_write.restype = wintypes.BOOL
 
-    result = subprocess.run(
-        [cmdkey, f"/generic:{target}", f"/user:{username}", f"/pass:{password}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        details = (result.stderr or result.stdout or "Unknown cmdkey failure").strip()
-        raise CredentialError(f"cmdkey failed while storing credentials: {details}")
+    password_bytes = password.encode("utf-16-le")
+    blob_arr = (ctypes.c_ubyte * len(password_bytes))(*password_bytes)
+
+    cred = CREDENTIALW()
+    cred.Flags = 0
+    cred.Type = GENERIC_CREDENTIAL_TYPE
+    cred.TargetName = target
+    cred.Comment = "Storypark Scraper Credentials"
+    cred.CredentialBlobSize = len(password_bytes)
+    cred.CredentialBlob = ctypes.cast(blob_arr, ctypes.POINTER(ctypes.c_ubyte))
+    cred.Persist = CRED_PERSIST_LOCAL_MACHINE
+    cred.AttributeCount = 0
+    cred.Attributes = None
+    cred.TargetAlias = None
+    cred.UserName = username
+
+    if not cred_write(ctypes.byref(cred), 0):
+        error = ctypes.get_last_error()
+        raise CredentialError(f"CredWriteW failed with Windows error {error}")
+
+
+def delete_windows_credentials(target: str) -> bool:
+    if os.name != "nt":
+        return False
+    advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+    cred_delete = advapi32.CredDeleteW
+    cred_delete.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+    cred_delete.restype = wintypes.BOOL
+    return bool(cred_delete(target, GENERIC_CREDENTIAL_TYPE, 0))
 
 
 def _load_from_windows_credential_manager(target: str) -> Optional[Credentials]:
@@ -169,11 +200,11 @@ def _credential_fallback_path(root_dir: Path) -> Path:
 def _store_dpapi_file(path: Path, target: str, username: str, password: str) -> None:
     if os.name != "nt":
         raise CredentialError("DPAPI credential fallback is only available on Windows")
-    encrypted_password = _dpapi_protect(password.encode("utf-8"), local_machine=True)
+    encrypted_password = _dpapi_protect(password.encode("utf-8"), local_machine=False)
     payload = {
-        "version": 1,
+        "version": 2,
         "backend": "dpapi-local-file",
-        "scope": "local_machine",
+        "scope": "current_user",
         "target": target,
         "username": username,
         "password": base64.b64encode(encrypted_password).decode("ascii"),

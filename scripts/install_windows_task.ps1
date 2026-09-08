@@ -3,7 +3,9 @@ param(
     [string]$RunAt = "03:00",
     [string]$PythonExe = "",
     [string]$ConfigPath = "",
-    [string]$User = ""
+    [string]$User = "",
+    [ValidateSet("Interactive", "S4U", "Password")]
+    [string]$LogonType = "Interactive"
 )
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -19,19 +21,19 @@ $Trigger = New-ScheduledTaskTrigger -Daily -At ([datetime]::ParseExact($RunAt, '
 $Settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 
 if ($User) {
-    $Credential = Get-Credential -UserName $User -Message "Enter the password for the scheduled task account"
-    $Bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Credential.Password)
-    try {
-        $PlainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($Bstr)
+    if ($LogonType -eq "Password") {
+        $Credential = Get-Credential -UserName $User -Message "Enter the password for the scheduled task account"
+        Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -User $Credential.UserName -Password ($Credential.GetNetworkCredential().Password) -Force | Out-Null
     }
-    finally {
-        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Bstr)
+    else {
+        $Principal = New-ScheduledTaskPrincipal -UserId $User -LogonType $LogonType
+        Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Force | Out-Null
     }
-
-    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -User $Credential.UserName -Password $PlainPassword -Force | Out-Null
 }
 else {
     Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Force | Out-Null
 }
 
-Write-Host "Scheduled task '$TaskName' registered."
+Write-Host "Scheduled task '$TaskName' registered successfully."
+Write-Host "Note: Store Storypark credentials securely in Windows Credential Manager using:"
+Write-Host "  python -m storypark_scraper store-credentials --username <your-email>"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from getpass import getpass
 import json
+import os
 from pathlib import Path
 
 from storypark_scraper.app import StoryparkApplication
@@ -63,7 +64,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     serve_parser = subparsers.add_parser("serve", help="Run a basic webserver to expose the status JSON")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Host address to bind to (default: 127.0.0.1)")
     serve_parser.add_argument("--port", type=int, default=8082, help="Port to listen on (default: 8082)")
+    serve_parser.add_argument(
+        "--auth-token",
+        default=os.getenv("SP_WEB_TOKEN"),
+        help="Optional bearer token or ?token= required to access status endpoint (or set SP_WEB_TOKEN)",
+    )
 
     subparsers.add_parser("status", help="Print the current status payload derived from SQLite state")
     return parser
@@ -106,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         from storypark_scraper.webserver import run_webserver
-        return run_webserver(config_path, port=args.port)
+        return run_webserver(config_path, port=args.port, host=args.host, auth_token=args.auth_token)
 
     if args.command == "status":
         config = load_config(config_path)

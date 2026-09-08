@@ -65,33 +65,42 @@ The immediate focus is stabilizing core scraping, media downloading, state persi
 
 ---
 
-## Phase 2: Security & Credential Hardening (Deferred)
+## Phase 2: Security & Credential Hardening
 
-*Note: Deferred as the deployment runs on a trusted local network, but scheduled for subsequent remediation.*
-
-- [ ] **Stop passing plaintext passwords via `cmdkey.exe` command-line arguments**
+- [x] **Stop passing plaintext passwords via `cmdkey.exe` command-line arguments**
   - **File**: `storypark_scraper/credentials.py` (`store_windows_credentials`)
   - **Issue**: Plaintext password visible in process tables, audit logs, and task managers.
-  - **Remedy**: Use `Advapi32.dll` `CredWriteW` via `ctypes` directly or adopt `keyring`.
+  - **Remedy**: Use `Advapi32.dll` `CredWriteW` via `ctypes` directly without spawning any external processes. *(Resolved)*
 
-- [ ] **Fix insecure DPAPI scope**
+- [x] **Fix insecure DPAPI scope**
   - **File**: `storypark_scraper/credentials.py` (`_store_dpapi_file`)
   - **Issue**: Uses `CRYPTPROTECT_LOCAL_MACHINE` (allows any process/user on machine to decrypt credentials).
-  - **Remedy**: Switch to user-scoped DPAPI (`local_machine=False`).
+  - **Remedy**: Switch to user-scoped DPAPI (`local_machine=False`, `scope="current_user"`) with backwards-compatible decryption for existing machine-scoped stores. *(Resolved)*
 
-- [ ] **Remove plaintext password extraction in scheduled task setup**
+- [x] **Remove plaintext password extraction in scheduled task setup**
   - **File**: `scripts/install_windows_task.ps1`
   - **Issue**: Marshals SecureString to plaintext BSTR in PowerShell memory.
+  - **Remedy**: Support modern logon types (`Interactive` / `S4U`) via `New-ScheduledTaskPrincipal` and eliminate unmanaged BSTR marshaling. *(Resolved)*
 
-- [ ] **Sanitize `story_id` in archive paths**
+- [x] **Sanitize `story_id` in archive paths**
   - **File**: `storypark_scraper/archive.py` (`export_story`)
   - **Issue**: `child_name` is sanitized but `story.story_id` is raw, allowing potential path traversal.
-  - **Remedy**: Apply `_sanitize_path` to `story_id`.
+  - **Remedy**: Apply `_sanitize_path` to `story_id`. *(Resolved in Phase 1)*
 
-- [ ] **Prevent asset filename collision on identical basenames**
+- [x] **Prevent asset filename collision on identical basenames**
   - **File**: `storypark_scraper/downloader.py` (`_derive_filename`)
   - **Issue**: Two media items in the same story with identical URL filenames overwrite each other.
-  - **Remedy**: Prefix filename with asset index or unique ID hash.
+  - **Remedy**: Suffix subsequent matching filenames with asset collision counter `-02`, `-03`, etc. *(Resolved in Phase 1)*
+
+- [x] **Secure status webserver binding and access control**
+  - **File**: `storypark_scraper/webserver.py`, `storypark_scraper/cli.py`
+  - **Issue**: Listened on all interfaces `0.0.0.0` with no authentication, exposing child names and statistics to local network scanners.
+  - **Remedy**: Default host binding to `127.0.0.1` and support optional `--auth-token` (or `SP_WEB_TOKEN`) with `401 Unauthorized` enforcement. *(Resolved)*
+
+- [x] **Warn on plaintext credentials loaded from `.env`**
+  - **File**: `storypark_scraper/credentials.py`
+  - **Issue**: Plaintext `.env` credentials pose credential exposure risks on shared hosts.
+  - **Remedy**: Issue security `UserWarning` advising migration to Windows Credential Manager via `store-credentials`. *(Resolved)*
 
 ---
 
