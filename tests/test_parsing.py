@@ -85,7 +85,28 @@ class ParsingTests(unittest.TestCase):
         self.assertTrue(story.has_video)
         self.assertEqual(len(story.assets), 1)
         self.assertEqual(story.assets[0].kind, "video")
-        self.assertEqual(story.assets[0].source_url, "https://app.storypark.com/media/video-1")
+    def test_parse_malformed_html_resilience(self):
+        # Unclosed tags, mismatched tags, messy attributes that broke the old NIH parser
+        html = """
+        <div class="story-detail">
+          <h1>Resilience Test &amp; Fun</h1>
+          <div class="story-content">
+            <p>Paragraph 1 without closing tag
+            <p>Paragraph 2 <b>bold text without closing tag
+            <img src="/media/pic.jpg">
+          </div>
+        """
+        story = parse_story_from_html(
+            html,
+            "resilient-1",
+            "Alice",
+            "https://app.storypark.com/stories/resilient-1",
+        )
+        self.assertEqual(story.title, "Resilience Test & Fun")
+        self.assertIn("Paragraph 1 without closing tag", story.body)
+        self.assertIn("Paragraph 2 bold text without closing tag", story.body)
+        self.assertEqual(len(story.assets), 1)
+        self.assertEqual(story.assets[0].source_url, "https://app.storypark.com/media/pic.jpg")
 
 
 if __name__ == "__main__":

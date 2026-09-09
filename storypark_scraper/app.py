@@ -5,12 +5,10 @@ import time
 
 from storypark_scraper.archive import ArchiveWriter
 from storypark_scraper.browser import StoryparkBrowser
-from storypark_scraper.classification import build_classifier
 from storypark_scraper.config import AppConfig, load_config
 from storypark_scraper.credentials import load_credentials
 from storypark_scraper.downloader import AssetDownloader
 from storypark_scraper.filters import StoryFilter
-from storypark_scraper.google_photos import validate_google_photos_enabled
 from storypark_scraper.locking import acquire_run_lock
 from storypark_scraper.models import ChildTarget, Credentials, FilterDecision, RunStats, StoryContent
 from storypark_scraper.state import StateStore, utc_now_iso
@@ -21,11 +19,11 @@ class StoryparkApplication:
     def __init__(self, config_path: Path, logger):
         self._config: AppConfig = load_config(config_path)
         self._logger = logger
-        validate_google_photos_enabled(self._config.google_photos.enabled)
-        self._classifier = build_classifier(
-            enabled=self._config.classifier.enabled,
-            provider=self._config.classifier.provider,
-        )
+        if self._config.google_photos.enabled:
+            raise NotImplementedError(
+                "Google Photos upload is intentionally deferred in this release. "
+                "Keep google_photos.enabled=false until the uploader is implemented."
+            )
         self._filter = StoryFilter(self._config.filters)
         self._state = StateStore(self._config.paths.state_db)
         self._downloader = AssetDownloader(
@@ -168,7 +166,7 @@ class StoryparkApplication:
                             processed_story_count += 1
                             processed_child_story_count += 1
                             story.google_photos_candidate = _is_google_photos_candidate(story, known_child_aliases)
-                            story.semantic_labels = self._classifier.classify(story)
+                            story.semantic_labels = []
                             decision = _decide_story(self._filter, story, disable_filters)
 
                             if not decision.include:

@@ -114,6 +114,27 @@ class CredentialTests(unittest.TestCase):
                     "plaintext .env file" in str(w.message) for w in recorded_warnings
                 ))
 
+    def test_load_dotenv_parsing(self):
+        root = prepare_case_dir("credentials_dotenv_parsing")
+        env_file = root / ".env"
+        env_file.write_text(
+            """
+            # Leading comment
+            export SP_USER="quoted_user@example.com"
+            SP_PASS='secret\\'single\\'' # inline comment
+            COMPLEX_KEY = "value with # hash and = equals"
+            EMPTY_VAR=
+            ANOTHER="hello \\"world\\""
+            """.strip(),
+            encoding="utf-8",
+        )
+        parsed = _load_dotenv(env_file)
+        self.assertEqual(parsed.get("SP_USER"), "quoted_user@example.com")
+        self.assertEqual(parsed.get("SP_PASS"), "secret'single'")
+        self.assertEqual(parsed.get("COMPLEX_KEY"), "value with # hash and = equals")
+        self.assertEqual(parsed.get("EMPTY_VAR"), "")
+        self.assertEqual(parsed.get("ANOTHER"), 'hello "world"')
+
 
 if __name__ == "__main__":
     unittest.main()

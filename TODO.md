@@ -106,21 +106,21 @@ The immediate focus is stabilizing core scraping, media downloading, state persi
 
 ## Phase 3: Architecture & Technical Debt (NIH Syndrome & Dead Code)
 
-- [ ] **Replace homebrew YAML parser with standard library / PyYAML**
+- [x] **Replace homebrew YAML parser with standard library / PyYAML**
   - **File**: `storypark_scraper/yaml_utils.py`
   - **Issue**: 202 lines of brittle parser that fails on 4-space indentation, multiline strings, and mixed sequence/mappings.
-  - **Remedy**: Adopt standard `pyyaml` or Python 3.11+ stdlib `tomllib`.
+  - **Remedy**: Adopt standard `pyyaml` or Python 3.11+ stdlib `tomllib`. *(Resolved: replaced with PyYAML safe_load/safe_dump with POSIX path serialization and custom YamlError wrapping)*
 
-- [ ] **Replace homebrew HTML tree builder with BeautifulSoup / Selectolax**
+- [x] **Replace homebrew HTML tree builder with BeautifulSoup / Selectolax**
   - **File**: `storypark_scraper/parsing.py`
   - **Issue**: Custom 508-line DOM tree builder pops the entire tag stack on mismatched or unclosed HTML5 tags.
-  - **Remedy**: Use `beautifulsoup4` or `selectolax` for resilient parsing.
+  - **Remedy**: Use `beautifulsoup4` or `selectolax` for resilient parsing. *(Resolved: replaced with robust BeautifulSoup4 parser preserving existing public interface and tests)*
 
-- [ ] **Replace naive `.env` parser**
+- [x] **Replace naive `.env` parser**
   - **File**: `storypark_scraper/credentials.py` (`_load_dotenv`)
-  - **Remedy**: Adopt `python-dotenv` or robust regex parser.
+  - **Remedy**: Adopt `python-dotenv` or robust regex parser. *(Resolved: implemented robust regex-based parser supporting quotes, escaped quotes, inline comments, and export prefix)*
 
-- [ ] **Prune dead speculative code (Google Photos & Semantic Classifier)**
-  - **Files**: `storypark_scraper/google_photos.py`, `storypark_scraper/classification.py`, `config.yaml`, `state.py`
-  - **Issue**: Features raise `NotImplementedError` yet clutter database schema, child statistics queries, models, and config.
-  - **Remedy**: Remove dead feature plumbing until real implementations are planned.
+- [x] **Prune dead speculative code (Google Photos & Semantic Classifier)**
+  - **Files**: `storypark_scraper/google_photos.py`, `storypark_scraper/classification.py`, `storypark_scraper/app.py`
+  - **Issue**: Features raise `NotImplementedError` yet clutter codebase.
+  - **Remedy**: Removed `google_photos.py` and `classification.py` stubs, streamlined `app.py` while preserving existing `google_photos_candidate` status reporting and DB backwards compatibility. *(Resolved)*

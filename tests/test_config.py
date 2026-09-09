@@ -5,6 +5,7 @@ import shutil
 import unittest
 
 from storypark_scraper.config import load_config
+from storypark_scraper.yaml_utils import YamlError, dump_yaml, parse_yaml
 
 
 RUNTIME_ROOT = Path(__file__).parent / ".runtime"
@@ -62,6 +63,38 @@ google_photos:
         self.assertEqual(config.filters.exclude_keywords, ["menu"])
         self.assertEqual(config.filters.per_child["Alice"].exclude_keywords, ["fundraiser"])
         self.assertEqual(config.paths.archive, root / "archive")
+
+    def test_parse_yaml_features(self):
+        yaml_text = """
+        description: |
+          Line 1 of text
+          Line 2 of text
+        numbers: [1, 2, 3]
+        nested:
+            deep:
+                key: true
+        """
+        data = parse_yaml(yaml_text)
+        self.assertEqual(data["description"].strip(), "Line 1 of text\nLine 2 of text")
+        self.assertEqual(data["numbers"], [1, 2, 3])
+        self.assertTrue(data["nested"]["deep"]["key"])
+
+    def test_parse_yaml_invalid_raises_yaml_error(self):
+        bad_yaml = "foo: [bar: 123"
+        with self.assertRaises(YamlError):
+            parse_yaml(bad_yaml)
+
+    def test_dump_yaml_roundtrip(self):
+        payload = {
+            "title": "Kangaroo 🦘",
+            "count": 42,
+            "nested": {"path": Path("/var/log")},
+        }
+        dumped = dump_yaml(payload)
+        self.assertIn("🦘", dumped)
+        loaded = parse_yaml(dumped)
+        self.assertEqual(loaded["title"], "Kangaroo 🦘")
+        self.assertEqual(loaded["nested"]["path"], "/var/log")
 
 
 if __name__ == "__main__":

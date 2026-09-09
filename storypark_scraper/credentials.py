@@ -7,6 +7,7 @@ import ctypes
 from ctypes import wintypes
 import json
 import os
+import re
 import shutil
 import subprocess
 from typing import Optional
@@ -313,11 +314,42 @@ def _load_dotenv(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     values: dict[str, str] = {}
+    line_pattern = re.compile(
+        r"""
+        ^\s*
+        (?:export\s+)?              # Optional export keyword
+        ([A-Za-z_][A-Za-z0-9_]*)    # Variable key
+        \s*=\s*
+        (                           # Value
+            '(?:\\'|[^'])*'         # Single-quoted string
+            |
+            "(?:\\"|[^"])*"         # Double-quoted string
+            |
+            [^#\r\n]*               # Unquoted value up to comment or newline
+        )
+        (?:\s*\#.*)?                # Optional trailing comment
+        $
+        """,
+        re.VERBOSE,
+    )
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+        if not line or line.startswith("#"):
             continue
-        key, value = line.split("=", 1)
-        cleaned = value.strip().strip('"').strip("'")
-        values[key.strip()] = cleaned
+        match = line_pattern.match(raw_line)
+        if not match:
+            if "=" in line:
+                k, v = line.split("=", 1)
+                values[k.strip()] = v.strip().strip('"').strip("'")
+            continue
+        key, value = match.group(1), match.group(2).strip()
+        if value.startswith('"') and value.endswith('"') and len(value) >= 2:
+            try:
+                value = bytes(value[1:-1], "utf-8").decode("unicode_escape")
+            except Exception:
+                value = value[1:-1]
+        elif value.startswith("'") and value.endswith("'") and len(value) >= 2:
+            value = value[1:-1].replace(r"\'", "'")
+        values[key] = value
     return values
+

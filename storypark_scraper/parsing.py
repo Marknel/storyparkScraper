@@ -1,82 +1,27 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime
-from html.parser import HTMLParser
-from typing import Callable, Iterable, Optional
 import re
+from typing import Iterable, Optional
 from urllib.parse import urljoin
+from bs4 import BeautifulSoup, Tag
 
 from storypark_scraper.models import ChildTarget, StoryAsset, StoryContent
 
 
-VOID_TAGS = {
-    "area",
-    "base",
-    "br",
-    "col",
-    "embed",
-    "hr",
-    "img",
-    "input",
-    "link",
-    "meta",
-    "param",
-    "source",
-    "track",
-    "wbr",
-}
+def _get_classes(tag: Tag) -> set[str]:
+    cls = tag.get("class")
+    if isinstance(cls, list):
+        return set(cls)
+    if isinstance(cls, str):
+        return set(cls.split())
+    return set()
 
 
-@dataclass(slots=True)
-class HtmlNode:
-    tag: str
-    attrs: dict[str, str]
-    parent: Optional["HtmlNode"] = None
-    children: list["HtmlNode"] = field(default_factory=list)
-    text_parts: list[str] = field(default_factory=list)
-
-    def attr(self, key: str, default: str = "") -> str:
-        return self.attrs.get(key, default)
-
-    def classes(self) -> set[str]:
-        return {item for item in self.attr("class").split() if item}
-
-    def text_content(self) -> str:
-        parts = list(self.text_parts)
-        for child in self.children:
-            child_text = child.text_content()
-            if child_text:
-                parts.append(child_text)
-        return _normalize_whitespace(" ".join(parts))
-
-
-class _TreeBuilder(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.root = HtmlNode(tag="document", attrs={})
-        self.stack: list[HtmlNode] = [self.root]
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        node = HtmlNode(tag=tag, attrs={key: value or "" for key, value in attrs}, parent=self.stack[-1])
-        self.stack[-1].children.append(node)
-        if tag not in VOID_TAGS:
-            self.stack.append(node)
-
-    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        node = HtmlNode(tag=tag, attrs={key: value or "" for key, value in attrs}, parent=self.stack[-1])
-        self.stack[-1].children.append(node)
-
-    def handle_endtag(self, tag: str) -> None:
-        while len(self.stack) > 1:
-            node = self.stack.pop()
-            if node.tag == tag:
-                return
-
-    def handle_data(self, data: str) -> None:
-        text = _normalize_whitespace(data)
-        if text:
-            self.stack[-1].text_parts.append(text)
+def _tag_text(tag: Optional[Tag]) -> str:
+    if tag is None:
+        return ""
+    return _normalize_whitespace(tag.get_text(" "))
 
 
 def parse_child_targets_from_html(
@@ -84,30 +29,33 @@ def parse_child_targets_from_html(
     stories_url_template: str,
     allowlist: Optional[Iterable[str]] = None,
 ) -> list[ChildTarget]:
-    root = _parse_html(html)
+    soup = BeautifulSoup(html, "html.parser")
     allowed = {item.casefold() for item in (allowlist or []) if item}
-
-    children = _parse_current_child_targets(root, stories_url_template, allowed)
+    children = _parse_current_child_targets(soup, stories_url_template, allowed)
     if children:
         return children
-    return _parse_legacy_child_targets(root, stories_url_template, allowed)
+    return _parse_legacy_child_targets(soup, stories_url_template, allowed)
 
 
 def _parse_current_child_targets(
-    root: HtmlNode,
+    soup: BeautifulSoup,
     stories_url_template: str,
     allowed: set[str],
 ) -> list[ChildTarget]:
     children: list[ChildTarget] = []
     seen_codes: set[str] = set()
-    for node in iter_nodes(root):
-        if node.attr("data-action") != "child-menu":
-            continue
+    for node in soup.find_all(attrs={"data-action": "child-menu"}):
         label = _extract_current_child_label(node)
-        story_link = _find_first(node, _is_child_stories_link)
+        story_link = None
+        for a in node.find_all("a"):
+            href = a.get("href", "")
+            if "/children/" in href and href.endswith("/stories"):
+                story_link = a
+                break
         if not label or story_link is None:
             continue
-        code = _extract_child_code_from_href(story_link.attr("href"))
+        href = story_link.get("href", "")
+        code = _extract_child_code_from_href(href)
         if not code or code in seen_codes:
             continue
         if allowed and label.casefold() not in allowed:
@@ -116,7 +64,7 @@ def _parse_current_child_targets(
             ChildTarget(
                 name=label,
                 code=code,
-                stories_url=_normalize_story_url(story_link.attr("href"), stories_url_template, code),
+                stories_url=_normalize_story_url(href, stories_url_template, code),
             )
         )
         seen_codes.add(code)
@@ -124,20 +72,18 @@ def _parse_current_child_targets(
 
 
 def _parse_legacy_child_targets(
-    root: HtmlNode,
+    soup: BeautifulSoup,
     stories_url_template: str,
     allowed: set[str],
 ) -> list[ChildTarget]:
     children: list[ChildTarget] = []
     seen_codes: set[str] = set()
-    for node in iter_nodes(root):
-        href = node.attr("href")
-        if node.tag != "a" or node.attr("data-toggle") != "menu" or not href.startswith("#child-navigation-"):
+    for node in soup.find_all("a", attrs={"data-toggle": "menu"}):
+        href = node.get("href", "")
+        if not href.startswith("#child-navigation-"):
             continue
-        label = _find_descendant_text(
-            node,
-            lambda child: child.tag == "span" and "sp-c-nav-drawer__link-label" in child.classes(),
-        )
+        label_span = node.find("span", class_="sp-c-nav-drawer__link-label")
+        label = _tag_text(label_span)
         code = href.removeprefix("#child-navigation-")
         if not code or not label or code in seen_codes:
             continue
@@ -154,24 +100,17 @@ def _parse_legacy_child_targets(
     return children
 
 
-def _extract_current_child_label(node: HtmlNode) -> str:
-    for predicate in [
-        lambda child: child.attr("data-action") == "open-child-menu",
-        lambda child: child.tag == "button" and "v-list-item-title" in child.classes(),
-        lambda child: child.tag == "div" and "v-list-item-title" in child.classes(),
-        lambda child: child.tag == "div" and "v-list-item__title" in child.classes(),
-    ]:
-        label = _find_descendant_text(node, predicate)
-        if label:
-            return label
+def _extract_current_child_label(node: Tag) -> str:
+    for target in node.find_all(attrs={"data-action": "open-child-menu"}):
+        text = _tag_text(target)
+        if text:
+            return text
+    for cls in ("v-list-item-title", "v-list-item__title"):
+        for target in node.find_all(class_=cls):
+            text = _tag_text(target)
+            if text:
+                return text
     return ""
-
-
-def _is_child_stories_link(node: HtmlNode) -> bool:
-    if node.tag != "a":
-        return False
-    href = node.attr("href")
-    return "/children/" in href and href.endswith("/stories")
 
 
 def _extract_child_code_from_href(href: str) -> str:
@@ -186,11 +125,11 @@ def _normalize_story_url(href: str, stories_url_template: str, child_code: str) 
 
 
 def parse_story_ids_from_html(html: str) -> list[str]:
-    root = _parse_html(html)
+    soup = BeautifulSoup(html, "html.parser")
     story_ids: list[str] = []
     seen: set[str] = set()
-    for node in iter_nodes(root):
-        story_id = node.attr("storyparkid")
+    for node in soup.find_all(attrs={"storyparkid": True}):
+        story_id = node["storyparkid"]
         if not story_id or story_id in seen:
             continue
         story_ids.append(story_id)
@@ -199,22 +138,25 @@ def parse_story_ids_from_html(html: str) -> list[str]:
 
 
 def parse_story_from_html(html: str, story_id: str, child_name: str, source_url: str) -> StoryContent:
-    root = _parse_html(html)
-    title = _first_non_empty_text(
-        root,
-        [
-            lambda node: node.tag == "h1",
-            lambda node: node.tag == "h2",
-            lambda node: node.attr("data-testid") == "story-title",
-        ],
-    )
-    published_text = _extract_published_text(root)
+    soup = BeautifulSoup(html, "html.parser")
+    title = ""
+    for tag in soup.find_all(["h1", "h2"]):
+        t = _tag_text(tag)
+        if t:
+            title = t
+            break
+    if not title:
+        target = soup.find(attrs={"data-testid": "story-title"})
+        if target:
+            title = _tag_text(target)
+
+    published_text = _extract_published_text(soup)
     published_at = _normalize_story_date(published_text)
-    author = _extract_author(root)
-    included_children = _extract_included_children(root)
-    content_type = _extract_content_type(root)
-    body = _extract_body_text(root, title, published_text, author)
-    assets = _extract_assets(root, source_url)
+    author = _extract_author(soup)
+    included_children = _extract_included_children(soup)
+    content_type = _extract_content_type(soup)
+    body = _extract_body_text(soup, title, published_text, author)
+    assets = _extract_assets(soup, source_url)
 
     return StoryContent(
         story_id=story_id,
@@ -231,87 +173,77 @@ def parse_story_from_html(html: str, story_id: str, child_name: str, source_url:
     )
 
 
-def iter_nodes(root: HtmlNode) -> Iterable[HtmlNode]:
-    for child in root.children:
-        yield child
-        yield from iter_nodes(child)
-
-
-def _parse_html(html: str) -> HtmlNode:
-    parser = _TreeBuilder()
-    parser.feed(html)
-    return parser.root
-
-
-def _extract_published_text(root: HtmlNode) -> str:
-    date_box = _find_first(root, lambda node: "date-box" in node.classes())
+def _extract_published_text(soup: BeautifulSoup) -> str:
+    date_box = soup.find(class_="date-box")
     if date_box:
-        return date_box.text_content()
+        return _tag_text(date_box)
 
-    author_box = _find_first(root, lambda node: "author-box" in node.classes())
+    author_box = soup.find(class_="author-box")
     if author_box:
-        details_row = _find_first(
-            author_box,
-            lambda node: node.tag == "div" and "justify-space-between" in node.classes() and "align-center" in node.classes(),
+        details_row = author_box.find(
+            "div",
+            class_=lambda c: c and "justify-space-between" in c and "align-center" in c,
         )
         if details_row:
-            for child in details_row.children:
-                if "flex-shrink-0" not in child.classes():
-                    continue
-                text = child.text_content()
+            for child in details_row.find_all("div", class_=lambda c: c and "flex-shrink-0" in c):
+                text = _tag_text(child)
                 if text and text.casefold() != "story date":
                     return text
-        for node in iter_nodes(author_box):
-            text = node.text_content()
+        for tag in author_box.find_all(True):
+            text = _tag_text(tag)
             if _looks_like_story_date(text):
                 return text
 
-    return _first_non_empty_text(
-        root,
-        [
-            lambda node: {"text-h6", "grey2--text"}.issubset(node.classes()) and _looks_like_story_date(node.text_content()),
-            lambda node: node.attr("data-testid") == "story-date",
-        ],
-    )
+    for tag in soup.find_all(class_=lambda c: c and "text-h6" in c and "grey2--text" in c):
+        text = _tag_text(tag)
+        if _looks_like_story_date(text):
+            return text
+
+    test_id = soup.find(attrs={"data-testid": "story-date"})
+    if test_id:
+        return _tag_text(test_id)
+    return ""
 
 
-def _extract_author(root: HtmlNode) -> str:
-    author_box = _find_first(root, lambda node: "author-box" in node.classes())
+def _extract_author(soup: BeautifulSoup) -> str:
+    author_box = soup.find(class_="author-box")
     if author_box:
-        details_row = _find_first(
-            author_box,
-            lambda node: node.tag == "div" and "justify-space-between" in node.classes() and "align-center" in node.classes(),
+        details_row = author_box.find(
+            "div",
+            class_=lambda c: c and "justify-space-between" in c and "align-center" in c,
         )
         if details_row:
-            for child in details_row.children:
-                if "flex-shrink-0" in child.classes():
+            for child in details_row.find_all("div", recursive=False):
+                if child.get("class") and "flex-shrink-0" in child["class"]:
                     continue
-                for node in iter_nodes(child):
-                    if node.tag != "div":
-                        continue
-                    text = node.text_content()
+                for node in child.find_all("div"):
+                    text = _tag_text(node)
                     if not text or text.casefold() in {"author", "story date"}:
                         continue
-                    if "font-weight-regular" in node.classes() or "text-h6" in node.classes():
+                    cls = _get_classes(node)
+                    if "font-weight-regular" in cls or "text-h6" in cls:
                         return text
 
-    return _first_non_empty_text(
-        root,
-        [
-            lambda node: node.attr("rel") == "author",
-            lambda node: node.tag == "a"
-            and any(segment in node.attr("href") for segment in ["/educators/", "/parents/"]),
-        ],
-    )
+    rel_author = soup.find(attrs={"rel": "author"})
+    if rel_author:
+        text = _tag_text(rel_author)
+        if text:
+            return text
+
+    for a in soup.find_all("a"):
+        href = a.get("href", "")
+        if any(s in href for s in ["/educators/", "/parents/"]):
+            text = _tag_text(a)
+            if text:
+                return text
+    return ""
 
 
-def _extract_included_children(root: HtmlNode) -> list[str]:
+def _extract_included_children(soup: BeautifulSoup) -> list[str]:
     explicit_names: list[str] = []
     seen: set[str] = set()
-    for node in iter_nodes(root):
-        if "child-name-link" not in node.classes():
-            continue
-        text = node.text_content()
+    for node in soup.find_all(class_="child-name-link"):
+        text = _tag_text(node)
         if not text or text in seen:
             continue
         explicit_names.append(text)
@@ -319,113 +251,94 @@ def _extract_included_children(root: HtmlNode) -> list[str]:
     if explicit_names:
         return explicit_names
 
-    header_title = _extract_story_header_title(root)
-    if not header_title:
-        return []
-    match = re.match(r"^(?:Individual|Group) Story for (.+)$", header_title)
-    if not match:
-        return []
-
-    names: list[str] = []
-    seen.clear()
-    for item in match.group(1).split(","):
-        name = _normalize_whitespace(item)
-        if not name or name in seen:
-            continue
-        names.append(name)
-        seen.add(name)
-    return names
-
-
-def _extract_story_header_title(root: HtmlNode) -> str:
-    for node in iter_nodes(root):
-        title = node.attr("title")
+    for node in soup.find_all(attrs={"title": True}):
+        title = node["title"]
         if title.startswith("Individual Story for ") or title.startswith("Group Story for "):
-            return title
-    return ""
+            match = re.match(r"^(?:Individual|Group) Story for (.+)$", title)
+            if match:
+                names: list[str] = []
+                for item in match.group(1).split(","):
+                    name = _normalize_whitespace(item)
+                    if name and name not in seen:
+                        names.append(name)
+                        seen.add(name)
+                return names
+    return []
 
 
-def _extract_content_type(root: HtmlNode) -> str:
-    explicit = _find_first(root, lambda node: bool(node.attr("data-type")))
+def _extract_content_type(soup: BeautifulSoup) -> str:
+    explicit = soup.find(attrs={"data-type": True})
     if explicit:
-        return explicit.attr("data-type")
-    badge = _find_first(root, lambda node: "story-type" in node.classes())
+        return explicit["data-type"]
+    badge = soup.find(class_="story-type")
     if badge:
-        return badge.text_content() or "story"
+        return _tag_text(badge) or "story"
     return "story"
 
 
-def _extract_body_text(root: HtmlNode, title: str, published_text: str, author: str) -> str:
+def _extract_body_text(soup: BeautifulSoup, title: str, published_text: str, author: str) -> str:
     paragraphs: list[str] = []
     seen: set[str] = set()
-    for node in iter_nodes(root):
-        if node.tag != "p":
+
+    for p in soup.find_all("p"):
+        if p.find_parent(class_="date-box"):
             continue
-        if _has_ancestor(node, lambda ancestor: "date-box" in ancestor.classes()):
-            continue
-        text = node.text_content()
+        text = _tag_text(p)
         if not text or text in {title, published_text, author} or text in seen:
             continue
         paragraphs.append(text)
         seen.add(text)
 
     if not paragraphs:
-        for node in iter_nodes(root):
-            if node.tag != "div":
-                continue
-            if not {"trix-content", "story-body"} & node.classes():
-                continue
-            text = node.text_content()
-            if text and text not in seen:
-                paragraphs.append(text)
-                seen.add(text)
+        for div in soup.find_all("div"):
+            cls = _get_classes(div)
+            if {"trix-content", "story-body"} & cls:
+                text = _tag_text(div)
+                if text and text not in seen:
+                    paragraphs.append(text)
+                    seen.add(text)
 
     return "\n\n".join(paragraphs)
 
 
-def _extract_assets(root: HtmlNode, base_url: str) -> list[StoryAsset]:
+def _extract_assets(soup: BeautifulSoup, base_url: str) -> list[StoryAsset]:
     preferred_images: list[StoryAsset] = []
     fallback_images: list[StoryAsset] = []
     videos: list[StoryAsset] = []
     seen_urls: set[str] = set()
 
-    for node in iter_nodes(root):
-        if node.tag == "img":
-            source = node.attr("src")
-            if not source:
-                continue
-            if any(token in node.classes() for token in {"avatar", "icon", "logo"}):
-                continue
-            asset = _build_asset(source, base_url, seen_urls, kind="image")
-            if asset is None:
-                continue
-            if node.attr("data-action") == "zoom-media" or _has_ancestor(
-                node,
-                lambda ancestor: "image-container" in ancestor.classes(),
-            ):
-                preferred_images.append(asset)
-            else:
-                fallback_images.append(asset)
+    for img in soup.find_all("img"):
+        src = img.get("src")
+        if not src:
             continue
+        cls = _get_classes(img)
+        if any(token in cls for token in {"avatar", "icon", "logo"}):
+            continue
+        asset = _build_asset(src, base_url, seen_urls, kind="image")
+        if asset is None:
+            continue
+        if img.get("data-action") == "zoom-media" or img.find_parent(class_="image-container"):
+            preferred_images.append(asset)
+        else:
+            fallback_images.append(asset)
 
-        if node.tag == "video":
-            asset = _build_asset(node.attr("src"), base_url, seen_urls, kind="video")
+    for video in soup.find_all("video"):
+        asset = _build_asset(video.get("src"), base_url, seen_urls, kind="video")
+        if asset is not None:
+            videos.append(asset)
+
+    for source in soup.find_all("source"):
+        stype = source.get("type", "").casefold()
+        if stype.startswith("video/") or source.find_parent("video"):
+            asset = _build_asset(source.get("src"), base_url, seen_urls, kind="video")
             if asset is not None:
                 videos.append(asset)
-            continue
-
-        if node.tag == "source":
-            source_type = node.attr("type").casefold()
-            if source_type.startswith("video/") or _has_ancestor(node, lambda ancestor: ancestor.tag == "video"):
-                asset = _build_asset(node.attr("src"), base_url, seen_urls, kind="video")
-                if asset is not None:
-                    videos.append(asset)
 
     images = preferred_images or fallback_images
     return images + videos
 
 
-def _build_asset(source: str, base_url: str, seen_urls: set[str], *, kind: str) -> StoryAsset | None:
+def _build_asset(source: Optional[str], base_url: str, seen_urls: set[str], *, kind: str) -> Optional[StoryAsset]:
     if not source:
         return None
     absolute = urljoin(base_url, source)
@@ -435,37 +348,6 @@ def _build_asset(source: str, base_url: str, seen_urls: set[str], *, kind: str) 
     return StoryAsset(source_url=absolute, kind=kind)
 
 
-def _find_first(root: HtmlNode, predicate: Callable[[HtmlNode], bool]) -> Optional[HtmlNode]:
-    for node in iter_nodes(root):
-        if predicate(node):
-            return node
-    return None
-
-
-def _find_descendant_text(root: HtmlNode, predicate: Callable[[HtmlNode], bool]) -> str:
-    node = _find_first(root, predicate)
-    return node.text_content() if node else ""
-
-
-def _first_non_empty_text(root: HtmlNode, predicates: list[Callable[[HtmlNode], bool]]) -> str:
-    for predicate in predicates:
-        node = _find_first(root, predicate)
-        if node:
-            text = node.text_content()
-            if text:
-                return text
-    return ""
-
-
-def _has_ancestor(node: HtmlNode, predicate: Callable[[HtmlNode], bool]) -> bool:
-    ancestor = node.parent
-    while ancestor:
-        if predicate(ancestor):
-            return True
-        ancestor = ancestor.parent
-    return False
-
-
 def _looks_like_story_date(value: str) -> bool:
     normalized = _normalize_story_date(value)
     if not normalized:
@@ -473,7 +355,7 @@ def _looks_like_story_date(value: str) -> bool:
     return normalized != value or bool(re.search(r"\b\d{4}\b", value))
 
 
-def _normalize_story_date(value: str) -> str | None:
+def _normalize_story_date(value: str) -> Optional[str]:
     cleaned = _normalize_whitespace(value)
     if not cleaned:
         return None
@@ -505,3 +387,4 @@ def _normalize_story_date(value: str) -> str | None:
 
 def _normalize_whitespace(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
