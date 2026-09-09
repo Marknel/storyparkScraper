@@ -285,6 +285,13 @@ class StateStore:
             result[child_name] = stats
         return result
 
+    def get_total_counts(self) -> tuple[int, int]:
+        row_stories = self.connection.execute("SELECT COUNT(DISTINCT story_id) AS cnt FROM stories").fetchone()
+        row_assets = self.connection.execute("SELECT COUNT(*) AS cnt FROM assets").fetchone()
+        stories_cnt = int(row_stories["cnt"]) if row_stories and row_stories["cnt"] is not None else 0
+        assets_cnt = int(row_assets["cnt"]) if row_assets and row_assets["cnt"] is not None else 0
+        return stories_cnt, assets_cnt
+
     @property
     def connection(self) -> sqlite3.Connection:
         if self._connection is None:

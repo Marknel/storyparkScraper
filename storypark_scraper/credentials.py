@@ -103,6 +103,24 @@ def load_credentials(root_dir: Path, credential_target: str, sources: Credential
     )
 
 
+def load_mqtt_credentials(
+    root_dir: Path,
+    target: str = "storypark-scraper-mqtt",
+    default_username: str = "",
+    default_password: str = "",
+) -> tuple[str, str]:
+    """Resolve MQTT username and password from Windows Credential Manager, DPAPI, env var, or config defaults."""
+    if default_password:
+        return default_username, default_password
+
+    sources = CredentialSources(username_env="SP_MQTT_USER", password_env="SP_MQTT_PASSWORD")
+    try:
+        creds = load_credentials(root_dir, target, sources=sources)
+        return creds.username or default_username, creds.password
+    except CredentialError:
+        return default_username, default_password
+
+
 def store_credentials(root_dir: Path, target: str, username: str, password: str) -> CredentialStoreOutcome:
     try:
         store_windows_credentials(target, username, password)

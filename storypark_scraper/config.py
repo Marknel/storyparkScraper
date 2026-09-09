@@ -74,6 +74,20 @@ class ClassifierConfig:
 
 
 @dataclass(slots=True)
+class MQTTConfig:
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 1883
+    username: str = ""
+    password: str = ""
+    tls: bool = False
+    discovery_prefix: str = "homeassistant"
+    topic_prefix: str = "storypark"
+    retain: bool = True
+    timeout_seconds: int = 5
+
+
+@dataclass(slots=True)
 class AppConfig:
     root_dir: Path
     paths: PathsConfig
@@ -82,6 +96,7 @@ class AppConfig:
     runtime: RuntimeConfig
     google_photos: GooglePhotosConfig = field(default_factory=GooglePhotosConfig)
     classifier: ClassifierConfig = field(default_factory=ClassifierConfig)
+    mqtt: MQTTConfig = field(default_factory=MQTTConfig)
 
     def ensure_directories(self) -> None:
         self.paths.archive.mkdir(parents=True, exist_ok=True)
@@ -102,6 +117,7 @@ def load_config(path: Path) -> AppConfig:
     runtime = raw.get("runtime", {})
     google_photos = raw.get("google_photos", {})
     classifier = raw.get("classifier", {})
+    mqtt = raw.get("mqtt", {})
 
     app_config = AppConfig(
         root_dir=root_dir,
@@ -155,6 +171,18 @@ def load_config(path: Path) -> AppConfig:
         classifier=ClassifierConfig(
             enabled=_as_bool(classifier.get("enabled", False)),
             provider=str(classifier.get("provider", "noop")),
+        ),
+        mqtt=MQTTConfig(
+            enabled=_as_bool(mqtt.get("enabled", False)),
+            host=str(mqtt.get("host", "127.0.0.1")),
+            port=int(mqtt.get("port", 1883)),
+            username=str(mqtt.get("username", "")),
+            password=str(mqtt.get("password", "")),
+            tls=_as_bool(mqtt.get("tls", False)),
+            discovery_prefix=str(mqtt.get("discovery_prefix", "homeassistant")),
+            topic_prefix=str(mqtt.get("topic_prefix", "storypark")),
+            retain=_as_bool(mqtt.get("retain", True)),
+            timeout_seconds=int(mqtt.get("timeout_seconds", 5)),
         ),
     )
     return app_config

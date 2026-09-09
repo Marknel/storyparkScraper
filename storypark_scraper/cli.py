@@ -73,6 +73,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("status", help="Print the current status payload derived from SQLite state")
+
+    mqtt_parser = subparsers.add_parser(
+        "mqtt-publish",
+        help="Publish Home Assistant MQTT discovery and current status telemetry",
+    )
+    mqtt_parser.add_argument(
+        "--status",
+        default=None,
+        help="Override status state (e.g. idle, success, failed)",
+    )
     return parser
 
 
@@ -124,6 +134,42 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             store.close()
         return 0
+
+    if args.command == "mqtt-publish":
+        from storypark_scraper.mqtt import HomeAssistantMQTTPublisher, build_telemetry_payload
+        from storypark_scraper.state import utc_now_iso
+        config = load_config(config_path)
+        store = StateStore(config.paths.state_db)
+        logger = configure_logging("INFO")
+        publisher = HomeAssistantMQTTPublisher(config.mqtt, logger=logger)
+        try:
+            store.initialize()
+            status_payload = build_status_payload(store)
+            children = list(status_payload.get("children", {}).keys())
+            print(f"Publishing Home Assistant discovery for {len(children)} children...")
+            publisher.publish_discovery(children)
+
+            stories_total, photos_total = store.get_total_counts()
+            latest_run = status_payload.get("latest_run") or {}
+            telemetry = build_telemetry_payload(
+                status=args.status or status_payload.get("state", "idle"),
+                problem=status_payload.get("state") == "failed",
+                last_run=latest_run.get("finished_at") or utc_now_iso(),
+                duration_seconds=0.0,
+                stories_total=stories_total,
+                photos_total=photos_total,
+                children_stats=status_payload.get("children", {}),
+            )
+            print("Publishing telemetry payload...")
+            success = publisher.publish_telemetry(telemetry)
+            if success:
+                print("Successfully published MQTT discovery and telemetry.")
+                return 0
+            else:
+                print("Failed to publish MQTT messages (or MQTT is disabled in config).")
+                return 1
+        finally:
+            store.close()
 
     logger = configure_logging(args.log_level)
     app = StoryparkApplication(config_path, logger)

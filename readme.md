@@ -33,19 +33,49 @@ You can still use `.env` for local development. Copy `example.env` to `.env` and
 - Browser profile: `state/browser-profile`
 - Status JSON: `status/status.json`
 
-## Home Assistant
+## Home Assistant Integration
 
-The first release writes a stable JSON payload with these fields:
+### 1. Native MQTT Discovery (Recommended)
+Configure the `mqtt` block in `config.yaml`:
+```yaml
+mqtt:
+  enabled: true
+  host: "192.168.1.50"          # IP or hostname of your MQTT broker
+  port: 1883
+  username: "homeassistant"      # Or dedicated MQTT user
+  password: "your_mqtt_password" # Or store via store-credentials / SP_MQTT_PASSWORD
+  discovery_prefix: "homeassistant"
+  topic_prefix: "storypark"
+```
 
-- `state`
-- `last_run_started_at`
-- `last_run_finished_at`
-- `last_success_at`
-- `last_story_acquired_at`
-- `stories_seen`
-- `stories_downloaded`
-- `stories_skipped`
-- `last_error`
+The scraper automatically registers a **Storypark Scraper** device in Home Assistant via MQTT Discovery with:
+- `sensor.storypark_status` (`idle`, `running`, `success`, `failed`, `interrupted`)
+- `binary_sensor.storypark_problem` (alert sensor: turns **ON** when an error or failure occurs)
+- `sensor.storypark_last_run` (timestamp) and `sensor.storypark_last_run_duration` (seconds)
+- `sensor.storypark_stories_total` and `sensor.storypark_photos_total`
+- Per-child counters: `sensor.storypark_<child>_stories` and `sensor.storypark_<child>_photos`
+
+Test discovery and publish current status at any time:
+```bash
+python -m storypark_scraper mqtt-publish
+```
+
+#### Example Failure Alert Automation in Home Assistant:
+```yaml
+alias: "Storypark Scraper Failure Notification"
+trigger:
+  - platform: state
+    entity_id: binary_sensor.storypark_problem
+    to: "on"
+action:
+  - service: notify.notify
+    data:
+      title: "⚠️ Storypark Scraper Alert"
+      message: "The daycare scraper encountered an error during its run!"
+```
+
+### 2. HTTP Status JSON Endpoint
+The status webserver serves `status.json` on port 8082 (`python -m storypark_scraper serve --auth-token <token>`).
 
 ## Docker
 

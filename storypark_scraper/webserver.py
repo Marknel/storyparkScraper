@@ -108,6 +108,33 @@ def run_webserver(
     host: str = "127.0.0.1",
     auth_token: str | None = None,
 ) -> int:
+    config = load_config(config_path)
+    if config.mqtt.enabled:
+        try:
+            from storypark_scraper.mqtt import HomeAssistantMQTTPublisher, build_telemetry_payload
+            from storypark_scraper.state import utc_now_iso
+            store = StateStore(config.paths.state_db)
+            store.initialize()
+            status_payload = build_status_payload(store)
+            children = list(status_payload.get("children", {}).keys())
+            publisher = HomeAssistantMQTTPublisher(config.mqtt)
+            publisher.publish_discovery(children)
+            stories_total, photos_total = store.get_total_counts()
+            latest_run = status_payload.get("latest_run") or {}
+            telemetry = build_telemetry_payload(
+                status=status_payload.get("state", "idle"),
+                problem=status_payload.get("state") == "failed",
+                last_run=latest_run.get("finished_at") or utc_now_iso(),
+                duration_seconds=0.0,
+                stories_total=stories_total,
+                photos_total=photos_total,
+                children_stats=status_payload.get("children", {}),
+            )
+            publisher.publish_telemetry(telemetry)
+            store.close()
+        except Exception:
+            pass
+
     with create_webserver(config_path, port, host=host, auth_token=auth_token) as httpd:
         print(f"Serving status on {host}:{port}...")
         try:

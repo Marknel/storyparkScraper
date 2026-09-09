@@ -11,6 +11,7 @@ from storypark_scraper.downloader import AssetDownloader
 from storypark_scraper.filters import StoryFilter
 from storypark_scraper.locking import acquire_run_lock
 from storypark_scraper.models import ChildTarget, Credentials, FilterDecision, RunStats, StoryContent
+from storypark_scraper.mqtt import HomeAssistantMQTTPublisher, build_telemetry_payload
 from storypark_scraper.state import StateStore, utc_now_iso
 from storypark_scraper.status import build_status_payload, write_status_file
 
@@ -31,6 +32,7 @@ class StoryparkApplication:
             user_agent=self._config.runtime.user_agent,
         )
         self._archive_writer = ArchiveWriter(self._config.paths.archive, self._downloader)
+        self._mqtt = HomeAssistantMQTTPublisher(self._config.mqtt, self._logger)
 
     def run(
         self,
@@ -74,6 +76,7 @@ class StoryparkApplication:
                 )
             return credential_cache
 
+        start_time = time.time()
         try:
             with acquire_run_lock(self._config.paths.lock_file):
                 run_id = self._state.start_run()
@@ -83,6 +86,9 @@ class StoryparkApplication:
                 write_status_file(
                     self._config.paths.status_file,
                     build_status_payload(self._state, state="running", stats=stats, last_error=None),
+                )
+                self._mqtt.publish_telemetry(
+                    build_telemetry_payload(status="running", problem=False, last_run=utc_now_iso())
                 )
                 self._logger.info(
                     "Starting scraper run",
@@ -102,6 +108,7 @@ class StoryparkApplication:
                         if cookies:
                             self._downloader.set_cookies(cookies)
                     children = browser.discover_children()
+                    self._mqtt.publish_discovery([child.name for child in children])
                     known_child_aliases = _known_child_aliases(children)
                     existing_threshold = max(
                         1, self._config.runtime.consecutive_existing_stories_threshold
@@ -238,7 +245,23 @@ class StoryparkApplication:
                     last_story_acquired_at=latest_acquired_at,
                     last_error=None,
                 )
-                write_status_file(self._config.paths.status_file, build_status_payload(self._state))
+                duration = time.time() - start_time
+                status_payload = build_status_payload(self._state)
+                write_status_file(self._config.paths.status_file, status_payload)
+                stories_total, photos_total = self._state.get_total_counts()
+                self._mqtt.publish_telemetry(
+                    build_telemetry_payload(
+                        status="success",
+                        problem=False,
+                        last_run=utc_now_iso(),
+                        duration_seconds=duration,
+                        stories_total=stories_total,
+                        photos_total=photos_total,
+                        last_run_stories=processed_story_count,
+                        last_run_photos=stats.stories_downloaded,
+                        children_stats=status_payload.get("children", {}),
+                    )
+                )
                 return 0
         except Exception as exc:
             self._logger.exception("Scraper run failed")
@@ -254,6 +277,24 @@ class StoryparkApplication:
                     self._config.paths.status_file,
                     build_status_payload(self._state, state="failed", stats=stats, last_error=str(exc)),
                 )
+            stories_total, photos_total = (0, 0)
+            try:
+                stories_total, photos_total = self._state.get_total_counts()
+            except Exception:
+                pass
+            self._mqtt.publish_telemetry(
+                build_telemetry_payload(
+                    status="failed",
+                    problem=True,
+                    last_run=utc_now_iso(),
+                    duration_seconds=time.time() - start_time,
+                    stories_total=stories_total,
+                    photos_total=photos_total,
+                    last_run_stories=processed_story_count,
+                    last_run_photos=stats.stories_downloaded,
+                    error=str(exc),
+                )
+            )
             raise
         finally:
             self._downloader.close()
