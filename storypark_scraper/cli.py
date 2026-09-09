@@ -150,11 +150,15 @@ def main(argv: list[str] | None = None) -> int:
             publisher.publish_discovery(children)
 
             stories_total, photos_total = store.get_total_counts()
-            latest_run = status_payload.get("latest_run") or {}
+            last_run = (
+                status_payload.get("last_run_finished_at")
+                or status_payload.get("last_run_started_at")
+                or utc_now_iso()
+            )
             telemetry = build_telemetry_payload(
                 status=args.status or status_payload.get("state", "idle"),
                 problem=status_payload.get("state") == "failed",
-                last_run=latest_run.get("finished_at") or utc_now_iso(),
+                last_run=last_run,
                 duration_seconds=0.0,
                 stories_total=stories_total,
                 photos_total=photos_total,

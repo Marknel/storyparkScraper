@@ -44,6 +44,7 @@ def build_discovery_payloads(
         "availability_topic": availability_topic,
         "payload_available": "online",
         "payload_not_available": "offline",
+        "has_entity_name": True,
     }
 
     payloads: list[tuple[str, dict[str, Any]]] = []
@@ -53,7 +54,7 @@ def build_discovery_payloads(
         f"{discovery_prefix}/sensor/storypark_status/config",
         {
             **base_entity,
-            "name": "Storypark Scraper Status",
+            "name": "Status",
             "unique_id": "storypark_scraper_status",
             "state_topic": state_topic,
             "value_template": "{{ value_json.status }}",
@@ -66,7 +67,7 @@ def build_discovery_payloads(
         f"{discovery_prefix}/binary_sensor/storypark_problem/config",
         {
             **base_entity,
-            "name": "Storypark Scraper Problem",
+            "name": "Problem",
             "unique_id": "storypark_scraper_problem",
             "state_topic": state_topic,
             "value_template": "{{ value_json.problem }}",
@@ -81,11 +82,12 @@ def build_discovery_payloads(
         f"{discovery_prefix}/sensor/storypark_last_run/config",
         {
             **base_entity,
-            "name": "Storypark Last Run",
+            "name": "Last Run",
             "unique_id": "storypark_scraper_last_run",
             "state_topic": state_topic,
             "value_template": "{{ value_json.last_run }}",
             "device_class": "timestamp",
+            "icon": "mdi:clock-check-outline",
         },
     ))
 
@@ -94,11 +96,12 @@ def build_discovery_payloads(
         f"{discovery_prefix}/sensor/storypark_last_run_duration/config",
         {
             **base_entity,
-            "name": "Storypark Last Run Duration",
+            "name": "Duration",
             "unique_id": "storypark_scraper_last_run_duration",
             "state_topic": state_topic,
             "value_template": "{{ value_json.duration_seconds }}",
             "unit_of_measurement": "s",
+            "device_class": "duration",
             "icon": "mdi:timer-outline",
         },
     ))
@@ -108,11 +111,12 @@ def build_discovery_payloads(
         f"{discovery_prefix}/sensor/storypark_stories_total/config",
         {
             **base_entity,
-            "name": "Storypark Stories Total",
+            "name": "Total Stories",
             "unique_id": "storypark_scraper_stories_total",
             "state_topic": state_topic,
             "value_template": "{{ value_json.stories_total }}",
             "state_class": "total_increasing",
+            "unit_of_measurement": "stories",
             "icon": "mdi:book-open-page-variant",
         },
     ))
@@ -122,11 +126,12 @@ def build_discovery_payloads(
         f"{discovery_prefix}/sensor/storypark_photos_total/config",
         {
             **base_entity,
-            "name": "Storypark Photos Total",
+            "name": "Total Photos",
             "unique_id": "storypark_scraper_photos_total",
             "state_topic": state_topic,
             "value_template": "{{ value_json.photos_total }}",
             "state_class": "total_increasing",
+            "unit_of_measurement": "photos",
             "icon": "mdi:image-multiple",
         },
     ))
@@ -140,11 +145,12 @@ def build_discovery_payloads(
                 f"{discovery_prefix}/sensor/storypark_{slug}_stories/config",
                 {
                     **base_entity,
-                    "name": f"Storypark {child} Stories",
+                    "name": f"{child} Stories",
                     "unique_id": f"storypark_scraper_{slug}_stories",
                     "state_topic": state_topic,
-                    "value_template": f"{{{{ value_json.children['{child}'].stories if '{child}' in value_json.children else 0 }}}}",
+                    "value_template": f"{{{{ value_json.children['{child}'].stories if (value_json.children is defined and '{child}' in value_json.children) else 0 }}}}",
                     "state_class": "total_increasing",
+                    "unit_of_measurement": "stories",
                     "icon": "mdi:book-account",
                 },
             ))
@@ -153,11 +159,12 @@ def build_discovery_payloads(
                 f"{discovery_prefix}/sensor/storypark_{slug}_photos/config",
                 {
                     **base_entity,
-                    "name": f"Storypark {child} Photos",
+                    "name": f"{child} Photos",
                     "unique_id": f"storypark_scraper_{slug}_photos",
                     "state_topic": state_topic,
-                    "value_template": f"{{{{ value_json.children['{child}'].photos if '{child}' in value_json.children else 0 }}}}",
+                    "value_template": f"{{{{ value_json.children['{child}'].photos if (value_json.children is defined and '{child}' in value_json.children) else 0 }}}}",
                     "state_class": "total_increasing",
+                    "unit_of_measurement": "photos",
                     "icon": "mdi:image-account",
                 },
             ))
@@ -226,14 +233,27 @@ def _publish_messages(
     client.will_set(availability_topic, payload="offline", qos=1, retain=True)
 
     client.connect(config.host, config.port, keepalive=int(config.timeout_seconds * 2))
+    client.loop_start()
 
-    if availability_online:
-        client.publish(availability_topic, payload="online", qos=1, retain=True)
+    try:
+        publish_handles = []
+        if availability_online:
+            handle = client.publish(availability_topic, payload="online", qos=1, retain=True)
+            publish_handles.append(handle)
 
-    for topic, payload, retain in messages:
-        client.publish(topic, payload=payload, qos=1, retain=retain)
+        for topic, payload, retain in messages:
+            handle = client.publish(topic, payload=payload, qos=1, retain=retain)
+            publish_handles.append(handle)
 
-    client.disconnect()
+        timeout = max(1.0, float(config.timeout_seconds))
+        for handle in publish_handles:
+            try:
+                handle.wait_for_publish(timeout=timeout)
+            except Exception:
+                pass
+    finally:
+        client.loop_stop()
+        client.disconnect()
 
 
 class HomeAssistantMQTTPublisher:

@@ -46,11 +46,42 @@ class MQTTTests(unittest.TestCase):
 
         # Inspect problem binary sensor payload
         problem_payload = next(p for t, p in payloads if "storypark_problem" in t)
+        self.assertEqual(problem_payload["name"], "Problem")
+        self.assertTrue(problem_payload["has_entity_name"])
         self.assertEqual(problem_payload["device_class"], "problem")
         self.assertEqual(problem_payload["payload_on"], "ON")
         self.assertEqual(problem_payload["payload_off"], "OFF")
         self.assertEqual(problem_payload["device"]["name"], "Storypark Scraper")
         self.assertEqual(problem_payload["availability_topic"], "storypark/availability")
+
+        # Inspect duration sensor
+        duration_payload = next(p for t, p in payloads if "storypark_last_run_duration" in t)
+        self.assertEqual(duration_payload["name"], "Duration")
+        self.assertEqual(duration_payload["device_class"], "duration")
+        self.assertEqual(duration_payload["unit_of_measurement"], "s")
+
+        # Inspect total stories sensor
+        stories_payload = next(p for t, p in payloads if "storypark_stories_total" in t)
+        self.assertEqual(stories_payload["name"], "Total Stories")
+        self.assertEqual(stories_payload["state_class"], "total_increasing")
+        self.assertEqual(stories_payload["unit_of_measurement"], "stories")
+
+        # Inspect total photos sensor
+        photos_payload = next(p for t, p in payloads if "storypark_photos_total" in t)
+        self.assertEqual(photos_payload["name"], "Total Photos")
+        self.assertEqual(photos_payload["state_class"], "total_increasing")
+        self.assertEqual(photos_payload["unit_of_measurement"], "photos")
+
+        # Inspect child sensors
+        sam_stories = next(p for t, p in payloads if "storypark_samuel_cracknell_stories" in t)
+        self.assertEqual(sam_stories["name"], "Samuel Cracknell Stories")
+        self.assertEqual(sam_stories["state_class"], "total_increasing")
+        self.assertEqual(sam_stories["unit_of_measurement"], "stories")
+
+        sam_photos = next(p for t, p in payloads if "storypark_samuel_cracknell_photos" in t)
+        self.assertEqual(sam_photos["name"], "Samuel Cracknell Photos")
+        self.assertEqual(sam_photos["state_class"], "total_increasing")
+        self.assertEqual(sam_photos["unit_of_measurement"], "photos")
 
     def test_build_telemetry_payload_success(self):
         children_stats = {
