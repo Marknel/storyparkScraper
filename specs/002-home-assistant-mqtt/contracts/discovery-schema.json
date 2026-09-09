@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HomeAssistantMQTTDiscoveryConfig",
+  "description": "Standard schema for Home Assistant MQTT Discovery configuration payloads",
+  "type": "object",
+  "required": ["name", "unique_id", "state_topic", "device"],
+  "properties": {
+    "name": { "type": "string" },
+    "unique_id": { "type": "string" },
+    "state_topic": { "type": "string" },
+    "value_template": { "type": "string" },
+    "device_class": { "type": "string" },
+    "availability_topic": { "type": "string" },
+    "payload_available": { "type": "string", "default": "online" },
+    "payload_not_available": { "type": "string", "default": "offline" },
+    "device": {
+      "type": "object",
+      "required": ["identifiers", "name"],
+      "properties": {
+        "identifiers": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "name": { "type": "string" },
+        "manufacturer": { "type": "string" },
+        "model": { "type": "string" },
+        "sw_version": { "type": "string" }
+      }
+    }
+  }
+}
