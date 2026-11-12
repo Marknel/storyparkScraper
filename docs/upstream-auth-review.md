@@ -11,10 +11,10 @@ package. MFA and CAPTCHA are completed by the account owner when requested.
 The normal overnight job reuses the resulting profile. Authentication expiry
 produces a clear failure for the existing status/MQTT monitoring path.
 
-Our home installation's latest recorded real run failed while clicking the old
-long sign-in CSS selector. It is currently paused with runtime.enabled=false.
-The upstream button selector directly addresses that observed failure; current
-MFA/CAPTCHA behavior still needs acceptance on the home machine.
+Before this change, the home installation's latest real runs failed while
+clicking the old long sign-in CSS selector. The upstream button selector
+addresses that observed failure. Home acceptance on 12 November confirmed
+owner sign-in, headless session reuse and authenticated media acquisition.
 
 ## What upstream changed
 
@@ -73,10 +73,25 @@ Storypark account has completed verification.
 A bounded live headless check on the development PC reached the expected
 Storypark origin and sign-in form and correctly returned an owner-verification
 requirement, with no authenticated menu. No challenge was solved, archive sync
-started or home runtime state changed by that check. The complete local suite
-currently has 82 passing checks and one pre-existing Windows Credential Manager
-integration failure (CredWriteW error 8) on this workstation; the encrypted DPAPI
-fallback checks pass. GitHub-hosted CI and home acceptance remain distinct checks.
+started or home runtime state changed by that check. The authentication and
+deployment regression checks pass. One pre-existing Windows Credential Manager
+integration check fails with CredWriteW error 8 on this workstation; the
+encrypted DPAPI fallback checks and full GitHub-hosted Windows/Ubuntu CI pass.
+
+The owner then deployed e47291c on main-pc and completed sign-in using the
+existing configured browser profile. Two capped headless runs finished
+successfully at 21:08 and 21:09 Brisbane time on 12 November. Read-only SQLite
+and file checks verified two new stories with narrative text and 29 new image
+files, each nonempty and with a valid image signature. The second browser
+process reused the saved login without further owner interaction. Status
+reported success with no error, and MQTT publication succeeded.
+
+All 60 managed source hashes matched the deployment manifest. Configuration,
+archive, credentials and profile were preserved during deployment and acceptance.
+After acceptance, runtime.enabled was deliberately changed from false to true
+under the run lock, with a protected configuration backup. Parsed configuration
+comparison confirmed that this was the only setting changed; the existing
+03:00 schedule setting was retained.
 
 Home acceptance must run under the existing scheduled-task identity with the
 existing configuration/profile. Preserve the archive and pause setting during
