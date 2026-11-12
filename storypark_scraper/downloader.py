@@ -36,13 +36,25 @@ class AssetDownloader:
 
     def set_cookies(self, cookies: list[dict]) -> None:
         session = self._get_session()
+        session.cookies.clear()
         for cookie in cookies:
             name = cookie.get("name")
             value = cookie.get("value")
             domain = cookie.get("domain")
             path = cookie.get("path", "/")
-            if name and value:
-                session.cookies.set(name, value, domain=domain, path=path)
+            if name and value is not None:
+                options = {"path": path, "secure": bool(cookie.get("secure", False))}
+                if domain:
+                    options["domain"] = domain
+                expires = cookie.get("expires", -1)
+                if expires is not None and expires >= 0:
+                    options["expires"] = int(expires)
+                session.cookies.set(name, value, **options)
+
+    def set_user_agent(self, user_agent: str) -> None:
+        self._user_agent = user_agent
+        if self._session is not None:
+            self._session.headers.update({"User-Agent": user_agent})
 
     def download(self, asset: StoryAsset, target_dir: Path, index: int, story_source_url: str) -> Path:
         session = self._get_session()

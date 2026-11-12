@@ -41,10 +41,14 @@ filters:
       exclude_keywords:
         - fundraiser
 runtime:
+  enabled: false
   stop_after_existing_stories: false
   full_scan_on_first_run: true
   story_delay_seconds: 1.5
   max_stories_per_run: 3
+  auth_timeout_seconds: 900
+  auth_assist_host: 127.0.0.1
+  auth_assist_port: 8765
 classifier:
   enabled: false
 google_photos:
@@ -60,6 +64,11 @@ google_photos:
         self.assertTrue(config.runtime.full_scan_on_first_run)
         self.assertEqual(config.runtime.story_delay_seconds, 1.5)
         self.assertEqual(config.runtime.max_stories_per_run, 3)
+        self.assertFalse(config.runtime.enabled)
+        self.assertEqual(config.runtime.auth_timeout_seconds, 900)
+        self.assertEqual(config.runtime.auth_assist_host, "127.0.0.1")
+        self.assertEqual(config.runtime.auth_assist_port, 8765)
+        self.assertEqual(config.runtime.user_agent, "")
         self.assertEqual(config.filters.exclude_keywords, ["menu"])
         self.assertEqual(config.filters.per_child["Alice"].exclude_keywords, ["fundraiser"])
         self.assertEqual(config.paths.archive, root / "archive")

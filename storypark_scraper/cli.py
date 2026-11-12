@@ -7,8 +7,10 @@ import os
 from pathlib import Path
 
 from storypark_scraper.app import StoryparkApplication
+from storypark_scraper.browser import AuthenticationRequired, StoryparkBrowser
 from storypark_scraper.config import load_config
-from storypark_scraper.credentials import store_credentials
+from storypark_scraper.credentials import load_credentials, store_credentials
+from storypark_scraper.locking import RunLockError, acquire_run_lock
 from storypark_scraper.logging_utils import configure_logging
 from storypark_scraper.state import StateStore
 from storypark_scraper.status import build_status_payload
@@ -51,6 +53,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Archive stories without applying the configured exclude filters",
     )
     run_parser.add_argument("--log-level", default="INFO", help="Logging level")
+    run_parser.add_argument(
+        "--allow-paused", action="store_true",
+        help="Explicitly allow this manual run while runtime.enabled=false; does not unpause the schedule",
+    )
+
+    login_parser = subparsers.add_parser(
+        "login", help="Renew the saved session by completing Storypark CAPTCHA/MFA yourself",
+    )
+    login_parser.add_argument(
+        "--headless", action="store_true",
+        help="Use a protected login-assist web page instead of a visible browser window",
+    )
+    login_parser.add_argument("--timeout-seconds", type=int, default=None, help="Time allowed for owner sign-in (default: 600)")
+    login_parser.add_argument("--host", default=None, help="Login-assist bind address (default: 127.0.0.1)")
+    login_parser.add_argument("--port", type=int, default=None, help="Login-assist port (default: 8000; 0 selects a free port)")
 
     credential_parser = subparsers.add_parser(
         "store-credentials",
@@ -103,6 +120,41 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     config_path = Path(args.config).resolve()
+
+    if args.command == "login":
+        config = load_config(config_path)
+        timeout = args.timeout_seconds if args.timeout_seconds is not None else config.runtime.auth_timeout_seconds
+        port = args.port if args.port is not None else config.runtime.auth_assist_port
+        if timeout <= 0 or not 0 <= port <= 65535:
+            parser.error("Login timeout must be positive and port must be between 0 and 65535")
+        config.ensure_directories()
+        logger = configure_logging("INFO")
+
+        def credentials():
+            return load_credentials(config.root_dir, config.storypark.credential_target)
+
+        def ready(url):
+            # The temporary control token is displayed only to the interactive owner,
+            # never included in structured run logs, status JSON or telemetry.
+            print(f"Open this one-time login-assist link in your browser:\n{url}", flush=True)
+
+        try:
+            with acquire_run_lock(config.paths.lock_file):
+                with StoryparkBrowser(config, credentials, logger, headless=args.headless) as browser:
+                    if not args.headless:
+                        print("Complete any Storypark CAPTCHA/MFA in the login window. Waiting for verified sign-in...", flush=True)
+                    browser.authenticate(
+                        interactive=True, timeout_seconds=timeout, assist=args.headless,
+                        host=args.host, port=port, on_ready=ready,
+                    )
+            print("Storypark sign-in verified. The session is saved in the configured browser profile.")
+            return 0
+        except (AuthenticationRequired, RunLockError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        except KeyboardInterrupt:
+            print("Storypark login cancelled.", file=sys.stderr)
+            return 130
 
     if args.command == "store-credentials":
         config = load_config(config_path)
@@ -157,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             telemetry = build_telemetry_payload(
                 status=args.status or status_payload.get("state", "idle"),
-                problem=status_payload.get("state") == "failed",
+                problem=(args.status or status_payload.get("state")) in {"failed", "interrupted"},
                 last_run=last_run,
                 duration_seconds=0.0,
                 stories_total=stories_total,
@@ -177,11 +229,16 @@ def main(argv: list[str] | None = None) -> int:
 
     logger = configure_logging(args.log_level)
     app = StoryparkApplication(config_path, logger)
-    return app.run(
-        full_scan=args.full_scan,
-        reprocess_existing=args.reprocess_existing,
-        max_stories=args.max_stories,
-        max_stories_per_child=args.max_stories_per_child,
-        story_delay_seconds=args.story_delay_seconds,
-        disable_filters=args.disable_filters,
-    )
+    try:
+        return app.run(
+            full_scan=args.full_scan,
+            reprocess_existing=args.reprocess_existing,
+            max_stories=args.max_stories,
+            max_stories_per_child=args.max_stories_per_child,
+            story_delay_seconds=args.story_delay_seconds,
+            disable_filters=args.disable_filters,
+            allow_paused=args.allow_paused,
+        )
+    except (AuthenticationRequired, RunLockError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2

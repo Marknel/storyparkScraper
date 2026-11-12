@@ -43,9 +43,37 @@ class StoryparkApplication:
         max_stories_per_child: int | None = None,
         story_delay_seconds: float | None = None,
         disable_filters: bool = False,
+        allow_paused: bool = False,
     ) -> int:
         self._config.ensure_directories()
         self._state.initialize()
+        if not self._config.runtime.enabled and not allow_paused:
+            try:
+                self._logger.info("Scraper sync is paused (runtime.enabled=false); skipping run.")
+                status_payload = build_status_payload(self._state, state="paused")
+                status_payload["last_error"] = None
+                write_status_file(self._config.paths.status_file, status_payload)
+                stories_total, photos_total = self._state.get_total_counts()
+                last_run = (
+                    status_payload.get("last_run_finished_at")
+                    or status_payload.get("last_run_started_at")
+                    or utc_now_iso()
+                )
+                self._mqtt.publish_telemetry(
+                    build_telemetry_payload(
+                        status="paused",
+                        problem=False,
+                        last_run=str(last_run),
+                        duration_seconds=0.0,
+                        stories_total=stories_total,
+                        photos_total=photos_total,
+                        children_stats=status_payload.get("children", {}),
+                    )
+                )
+                return 0
+            finally:
+                self._downloader.close()
+                self._state.close()
         stats = RunStats()
         latest_acquired_at: str | None = None
         run_id: str | None = None
@@ -103,11 +131,8 @@ class StoryparkApplication:
                 )
 
                 with StoryparkBrowser(self._config, credential_provider, self._logger) as browser:
-                    if hasattr(browser, "get_cookies"):
-                        cookies = browser.get_cookies()
-                        if cookies:
-                            self._downloader.set_cookies(cookies)
                     children = browser.discover_children()
+                    self._sync_download_session(browser)
                     self._mqtt.publish_discovery([child.name for child in children])
                     known_child_aliases = _known_child_aliases(children)
                     existing_threshold = max(
@@ -170,6 +195,7 @@ class StoryparkApplication:
 
                             consecutive_existing_count = 0
                             story = browser.fetch_story(child, story_id)
+                            self._sync_download_session(browser)
                             processed_story_count += 1
                             processed_child_story_count += 1
                             story.google_photos_candidate = _is_google_photos_candidate(story, known_child_aliases)
@@ -299,6 +325,16 @@ class StoryparkApplication:
         finally:
             self._downloader.close()
             self._state.close()
+
+    def _sync_download_session(self, browser) -> None:
+        get_cookies = getattr(browser, "get_cookies", None)
+        if callable(get_cookies):
+            self._downloader.set_cookies(get_cookies())
+        get_user_agent = getattr(browser, "get_user_agent", None)
+        if callable(get_user_agent):
+            user_agent = get_user_agent()
+            if user_agent:
+                self._downloader.set_user_agent(user_agent)
 
 
 def _decide_story(story_filter: StoryFilter, story, disable_filters: bool) -> FilterDecision:

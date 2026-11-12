@@ -1,0 +1,77 @@
+name: Deploy Storypark home
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: storypark-home-deployment
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: >-
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'schedule' && vars.HOME_AUTO_DEPLOY == 'true'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.source.outputs.ready }}
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Verify private control repository and successful source CI
+        id: source
+        shell: pwsh
+        env:
+          CONTROL_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $headers = @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28'; 'User-Agent' = 'storypark-private-deploy' }
+          $controlHeaders = $headers.Clone()
+          $controlHeaders.Authorization = "Bearer $env:CONTROL_TOKEN"
+          $control = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY" -Headers $controlHeaders
+          if (-not $control.private) { throw 'Home deployment must run from a private control repository.' }
+          $sourceRepo = 'Marknel/storyparkScraper'
+          # Public source metadata uses anonymous reads; no public-repository dispatch token is needed.
+          $branch = Invoke-RestMethod -Uri "https://api.github.com/repos/$sourceRepo/git/ref/heads/master" -Headers $headers
+          $sha = [string]$branch.object.sha
+          if ($sha -notmatch '^[a-f0-9]{40}$') { throw 'Invalid source commit returned by GitHub.' }
+          $runs = Invoke-RestMethod -Uri "https://api.github.com/repos/$sourceRepo/actions/workflows/ci.yml/runs?branch=master&event=push&status=success&head_sha=$sha&per_page=10" -Headers $headers
+          $passed = @($runs.workflow_runs | Where-Object {
+            $_.head_sha -eq $sha -and $_.head_branch -eq 'master' -and
+            $_.event -eq 'push' -and $_.status -eq 'completed' -and
+            $_.conclusion -eq 'success' -and $_.head_repository.full_name -eq $sourceRepo
+          })
+          if (-not $passed.Count) {
+            'ready=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Host "No successful trusted master-push CI exists for $sha; deployment skipped."
+            exit 0
+          }
+          @('ready=true', "sha=$sha") | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Verified source commit $sha."
+
+  deploy:
+    needs: check
+    if: needs.check.outputs.ready == 'true'
+    runs-on: [self-hosted, Windows, X64, main-pc, storypark-deploy]
+    timeout-minutes: 15
+    environment: home
+    steps:
+      - name: Check out the verified public source
+        uses: actions/checkout@v4
+        with:
+          repository: Marknel/storyparkScraper
+          ref: ${{ needs.check.outputs.sha }}
+          path: source
+          persist-credentials: false
+          clean: true
+      - name: Deploy source while preserving runtime data
+        shell: pwsh
+        env:
+          DEPLOY_REVISION: ${{ needs.check.outputs.sha }}
+        run: ./source/scripts/deploy_home.ps1 -SourcePath (Join-Path $env:GITHUB_WORKSPACE 'source') -TargetPath 'C:\VMs\storyparkScraper' -SourceRevision $env:DEPLOY_REVISION

@@ -92,3 +92,4 @@ browser-profile/
 .bootstrap-tmp/
 debug-*.html
 spec-kit/
+.deployment/

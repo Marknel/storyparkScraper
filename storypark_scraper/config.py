@@ -7,10 +7,8 @@ from typing import Any
 from storypark_scraper.yaml_utils import load_yaml_file
 
 
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-)
+# An empty override selects the installed Chromium version, in both login/run modes.
+DEFAULT_USER_AGENT = ""
 
 
 @dataclass(slots=True)
@@ -45,6 +43,7 @@ class FiltersConfig(FilterSet):
 
 @dataclass(slots=True)
 class RuntimeConfig:
+    enabled: bool = True
     page_timeout_ms: int = 60_000
     scroll_pause_ms: int = 5_000
     network_idle_timeout_ms: int = 120_000
@@ -58,6 +57,9 @@ class RuntimeConfig:
     scroll_stable_rounds: int = 3
     user_agent: str = DEFAULT_USER_AGENT
     schedule_hint: str = "03:00"
+    auth_timeout_seconds: int = 600
+    auth_assist_host: str = "127.0.0.1"
+    auth_assist_port: int = 8000
 
 
 @dataclass(slots=True)
@@ -147,6 +149,7 @@ def load_config(path: Path) -> AppConfig:
             per_child=_load_child_filters(filters.get("per_child", {})),
         ),
         runtime=RuntimeConfig(
+            enabled=_as_bool(runtime.get("enabled", True)),
             page_timeout_ms=int(runtime.get("page_timeout_ms", 60_000)),
             scroll_pause_ms=int(runtime.get("scroll_pause_ms", 5_000)),
             network_idle_timeout_ms=int(runtime.get("network_idle_timeout_ms", 120_000)),
@@ -162,6 +165,9 @@ def load_config(path: Path) -> AppConfig:
             scroll_stable_rounds=int(runtime.get("scroll_stable_rounds", 3)),
             user_agent=str(runtime.get("user_agent", DEFAULT_USER_AGENT)),
             schedule_hint=str(runtime.get("schedule_hint", "03:00")),
+            auth_timeout_seconds=int(runtime.get("auth_timeout_seconds", 600)),
+            auth_assist_host=str(runtime.get("auth_assist_host", "127.0.0.1")),
+            auth_assist_port=int(runtime.get("auth_assist_port", 8000)),
         ),
         google_photos=GooglePhotosConfig(
             enabled=_as_bool(google_photos.get("enabled", False)),
