@@ -83,6 +83,37 @@ function Get-HomeRunnerRegistration([string]$Repository, [hashtable]$Headers) {
     }
 }
 
+function Get-ScraperTaskAccounts([object[]]$Tasks, [string]$Python, [string]$TargetRoot) {
+    $root = $TargetRoot.Replace('/', '\').TrimEnd('\')
+    $rootArgument = '(?i)(?<![A-Za-z0-9_.-])' + [regex]::Escape($root) + '(?:\\|["''\s]|$)'
+    foreach ($task in $Tasks) {
+        $actionsProperty = $task.PSObject.Properties['Actions']
+        if (-not $actionsProperty) { continue }
+        $matchesTarget = $false
+        foreach ($action in @($actionsProperty.Value)) {
+            if ($null -eq $action) { continue }
+            # COM handler and other non-Exec actions do not expose these properties.
+            $executeProperty = $action.PSObject.Properties['Execute']
+            if (-not $executeProperty -or -not $executeProperty.Value) { continue }
+            $execute = [Environment]::ExpandEnvironmentVariables([string]$executeProperty.Value).Trim().Trim('"')
+            $workingProperty = $action.PSObject.Properties['WorkingDirectory']
+            $working = if ($workingProperty) { [Environment]::ExpandEnvironmentVariables([string]$workingProperty.Value).Trim().Trim('"').TrimEnd('\') } else { '' }
+            $argumentsProperty = $action.PSObject.Properties['Arguments']
+            $arguments = if ($argumentsProperty) { [Environment]::ExpandEnvironmentVariables([string]$argumentsProperty.Value).Replace('/', '\') } else { '' }
+            if ($execute -ieq $Python -or $working -ieq $root -or $arguments -match $rootArgument) {
+                $matchesTarget = $true
+                break
+            }
+        }
+        if ($matchesTarget) {
+            $principalProperty = $task.PSObject.Properties['Principal']
+            $userProperty = if ($principalProperty -and $principalProperty.Value) { $principalProperty.Value.PSObject.Properties['UserId'] } else { $null }
+            if (-not $userProperty -or -not $userProperty.Value) { throw 'A matching scraper task has no readable Windows account. Specify -WindowsAccount explicitly.' }
+            [string]$userProperty.Value
+        }
+    }
+}
+
 if (-not $IsWindows -or $env:COMPUTERNAME -ine 'main-pc') { throw 'Run this installer in the main-pc RDP session.' }
 foreach ($command in @('git', 'pwsh')) { Get-Command $command -ErrorAction Stop | Out-Null }
 $python = Join-Path $TargetPath '.venv\Scripts\python.exe'
@@ -103,9 +134,7 @@ while ($ancestor) {
     $ancestor = Split-Path -Parent $ancestor
 }
 if (-not $WindowsAccount) {
-    $accounts = @(Get-ScheduledTask | Where-Object {
-        @($_.Actions | Where-Object { $_.Execute -eq $python -or $_.WorkingDirectory -eq $liveRoot }).Count -gt 0
-    } | ForEach-Object { $_.Principal.UserId } | Select-Object -Unique)
+    $accounts = @(Get-ScraperTaskAccounts -Tasks @(Get-ScheduledTask) -Python $python -TargetRoot $liveRoot | Select-Object -Unique)
     if ($accounts.Count -gt 1) { throw 'Multiple scraper task identities found. Specify -WindowsAccount explicitly.' }
     $WindowsAccount = if ($accounts.Count -eq 1) { $accounts[0] } else { [Security.Principal.WindowsIdentity]::GetCurrent().Name }
 }
