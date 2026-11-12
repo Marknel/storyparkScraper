@@ -11,6 +11,78 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+function Get-CachedGitHubCredential([string]$Repository) {
+    $overrides = @{
+        GCM_INTERACTIVE = 'never'
+        GIT_TERMINAL_PROMPT = '0'
+        GCM_GUI_PROMPT = '0'
+        GCM_TRACE = '0'
+        GCM_TRACE_SECRETS = '0'
+        GIT_TRACE = '0'
+        GIT_TRACE_CURL = '0'
+        GIT_CURL_VERBOSE = '0'
+    }
+    $previous = @{}
+    try {
+        foreach ($entry in $overrides.GetEnumerator()) {
+            $previous[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, 'Process')
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
+        }
+        $request = @('protocol=https', 'host=github.com', "path=$Repository.git", '', '') -join [char]10
+        $credentialLines = $request | & git credential fill 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        foreach ($line in $credentialLines) {
+            if ($line -match '^password=(.+)$') { return $Matches[1] }
+        }
+        return $null
+    }
+    catch { return $null }
+    finally {
+        foreach ($entry in $previous.GetEnumerator()) {
+            if ($null -eq $entry.Value) { Remove-Item -LiteralPath ("Env:" + $entry.Key) -ErrorAction SilentlyContinue }
+            else { [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process') }
+        }
+    }
+}
+
+function Request-PrivateRunnerRegistration([string]$Repository, [string]$CredentialToken, [hashtable]$Headers) {
+    $authHeaders = $Headers.Clone()
+    try {
+        $authHeaders.Authorization = "Bearer $CredentialToken"
+        $controlRepository = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository" -Headers $authHeaders
+        if (-not $controlRepository.private -or $controlRepository.full_name -ine $Repository) {
+            throw 'The home runner must be registered only to the named private deployment repository.'
+        }
+        return Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Repository/actions/runners/registration-token" -Headers $authHeaders
+    }
+    finally { $authHeaders.Clear() }
+}
+
+function Get-HomeRunnerRegistration([string]$Repository, [hashtable]$Headers) {
+    $cachedToken = Get-CachedGitHubCredential $Repository
+    if ($cachedToken) {
+        try {
+            return Request-PrivateRunnerRegistration $Repository $cachedToken $Headers
+        }
+        catch {
+            $response = $_.Exception.PSObject.Properties['Response']
+            $status = if ($response -and $response.Value) { [int]$response.Value.StatusCode } else { 0 }
+            if ($status -notin @(401, 403, 404)) { throw }
+        }
+        finally { $cachedToken = $null }
+    }
+    $securePat = Read-Host "GitHub PAT with Administration write for private $Repository (not the ADO PAT)" -AsSecureString
+    try {
+        $plainPat = [Net.NetworkCredential]::new('', $securePat).Password
+        return Request-PrivateRunnerRegistration $Repository $plainPat $Headers
+    }
+    finally {
+        $plainPat = $null
+        $securePat.Dispose()
+    }
+}
+
 if (-not $IsWindows -or $env:COMPUTERNAME -ine 'main-pc') { throw 'Run this installer in the main-pc RDP session.' }
 foreach ($command in @('git', 'pwsh')) { Get-Command $command -ErrorAction Stop | Out-Null }
 $python = Join-Path $TargetPath '.venv\Scripts\python.exe'
@@ -65,24 +137,7 @@ try {
 }
 finally { if (Test-Path -LiteralPath $zip -PathType Leaf) { Remove-Item -LiteralPath $zip } }
 
-$securePat = Read-Host "GitHub PAT with Administration write for private $DeploymentRepository (not the ADO PAT)" -AsSecureString
-$authHeaders = @{}
-$registration = $null
-try {
-    $plainPat = [Net.NetworkCredential]::new('', $securePat).Password
-    $authHeaders = $publicHeaders.Clone()
-    $authHeaders.Authorization = "Bearer $plainPat"
-    $controlRepository = Invoke-RestMethod -Uri "https://api.github.com/repos/$DeploymentRepository" -Headers $authHeaders
-    if (-not $controlRepository.private -or $controlRepository.full_name -ine $DeploymentRepository) {
-        throw 'The home runner must be registered only to the named private deployment repository.'
-    }
-    $registration = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$DeploymentRepository/actions/runners/registration-token" -Headers $authHeaders
-}
-finally {
-    $plainPat = $null
-    $authHeaders.Clear()
-    $securePat.Dispose()
-}
+$registration = Get-HomeRunnerRegistration $DeploymentRepository $publicHeaders
 if (-not $registration.token) { throw 'GitHub did not return a runner registration token.' }
 Push-Location $runnerRoot
 try {

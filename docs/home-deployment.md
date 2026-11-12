@@ -20,13 +20,20 @@ application repository.
 
 The installer obtains the latest Windows x64 runner from the official
 actions/runner release, requires its GitHub API SHA256 digest to match, and
-installs it separately at C:\actions-runner-storypark. It prompts securely for
-a GitHub PAT with Administration write for only the private deployment-control
-repository. Use -DeploymentRepository owner/name if a different private name was
-chosen. The installer verifies that the named repository is private before
-requesting a registration token. This is different
-from the ADO PAT. The persistent PAT is used only in memory to request a
-short-lived runner-registration token; it is not passed to a process or saved.
+installs it separately at C:\actions-runner-storypark. It first tries the Windows
+account's existing GitHub credential cache without opening any authentication
+prompt or browser. A usable cached credential avoids creating another PAT.
+If the cache is absent or cannot administer the private repository, it prompts
+securely for a GitHub PAT with Administration write for only that deployment
+repository. This is different from the ADO PAT.
+
+Use -DeploymentRepository owner/name if a different private name was chosen.
+The installer verifies that the named repository is private before requesting
+a registration token. Cached credentials and fallback PATs stay in memory;
+they are not printed, passed to a process, or saved. Cache lookup temporarily
+disables interactive prompts and credential tracing, then restores the previous
+process environment. Only a short-lived runner-registration token is passed to
+GitHub's configuration program.
 GitHub's native runner setup prompts for the Windows service account password.
 
 The default service identity is the existing scraper task identity when it can
