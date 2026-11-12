@@ -53,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Archive stories without applying the configured exclude filters",
     )
     run_parser.add_argument("--log-level", default="INFO", help="Logging level")
+    run_parser.add_argument(
+        "--allow-paused", action="store_true",
+        help="Explicitly allow this manual run while runtime.enabled=false; does not unpause the schedule",
+    )
 
     login_parser = subparsers.add_parser(
         "login", help="Renew the saved session by completing Storypark CAPTCHA/MFA yourself",
@@ -233,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             max_stories_per_child=args.max_stories_per_child,
             story_delay_seconds=args.story_delay_seconds,
             disable_filters=args.disable_filters,
+            allow_paused=args.allow_paused,
         )
     except (AuthenticationRequired, RunLockError) as exc:
         print(str(exc), file=sys.stderr)

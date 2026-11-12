@@ -133,11 +133,21 @@ class AppRunTests(unittest.TestCase):
             store.close()
 
     def test_media_downloads_use_authenticated_and_renewed_browser_session(self):
+        self._assert_media_session_handoff()
+
+    def test_explicit_acceptance_run_can_override_pause_without_changing_config(self):
+        self._assert_media_session_handoff(enabled=False, allow_paused=True)
+
+    def _assert_media_session_handoff(self, *, enabled=True, allow_paused=False):
         import requests
 
-        root = prepare_case_dir("app_session_handoff")
+        root = prepare_case_dir("app_session_handoff" if enabled else "app_paused_acceptance")
         config_path = root / "config.yaml"
-        config_path.write_text("runtime:\n  full_scan_on_first_run: false\n", encoding="utf-8")
+        config_path.write_text(
+            f"runtime:\n  enabled: {str(enabled).lower()}\n  full_scan_on_first_run: false\n",
+            encoding="utf-8",
+        )
+        original_config = config_path.read_bytes()
         logger = logging.getLogger("storypark_scraper.test.session_handoff")
         logger.handlers.clear()
         logger.addHandler(logging.NullHandler())
@@ -191,7 +201,7 @@ class AppRunTests(unittest.TestCase):
             "storypark_scraper.downloader._build_session", return_value=session
         ):
             app = StoryparkApplication(config_path, logger)
-            result = app.run(max_stories=2)
+            result = app.run(max_stories=2, allow_paused=allow_paused)
 
         self.assertEqual(result, 0)
         self.assertEqual(events, [
@@ -203,6 +213,8 @@ class AppRunTests(unittest.TestCase):
         media = list((root / "archive").rglob("*.jpg"))
         self.assertEqual(len(media), 2)
         self.assertTrue(all(path.read_bytes() == b"image-bytes" for path in media))
+        self.assertEqual(config_path.read_bytes(), original_config)
+        self.assertEqual(app._config.runtime.enabled, enabled)
 
     def test_run_honors_max_stories_and_delay(self):
         root = prepare_case_dir("app")

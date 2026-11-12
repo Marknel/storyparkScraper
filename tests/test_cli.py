@@ -27,6 +27,7 @@ class CliTests(unittest.TestCase):
                 "--story-delay-seconds",
                 "2.5",
                 "--disable-filters",
+                "--allow-paused",
             ]
         )
 
@@ -36,6 +37,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.max_stories_per_child, 5)
         self.assertEqual(args.story_delay_seconds, 2.5)
         self.assertTrue(args.disable_filters)
+        self.assertTrue(args.allow_paused)
 
     def test_login_uses_shared_profile_lock_without_creating_a_scrape_run(self):
         config = SimpleNamespace(

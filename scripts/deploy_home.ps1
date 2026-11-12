@@ -181,6 +181,12 @@ try {
     Write-JsonFile (Join-Path $backupRoot 'manifest.json') @{ revision = $revision.Trim(); target = $targetRoot; before = $before; created_at = [DateTime]::UtcNow.ToString('o') }
     foreach ($relative in $files) {
         $destination = Get-SafePath $targetRoot $relative
+        if ($null -eq $before[$relative]) {
+            if (Test-Path -LiteralPath $destination) { throw "A deployment destination appeared after inspection: $relative" }
+        }
+        elseif (-not (Test-Path -LiteralPath $destination -PathType Leaf) -or (Get-Hash $destination) -ne $before[$relative]) {
+            throw "Deployment source changed after backup: $relative"
+        }
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         $temporary = $destination + '.deploying-' + [guid]::NewGuid().ToString('N')
         $temporaryFiles.Add($temporary)
@@ -219,6 +225,7 @@ catch {
                 if (Test-Path -LiteralPath $destination -PathType Leaf) { Remove-Item -LiteralPath $destination }
             }
             else {
+                if ((Test-Path -LiteralPath $destination -PathType Leaf) -and (Get-Hash $destination) -eq $before[$relative]) { continue }
                 Copy-Item -LiteralPath (Get-SafePath $backupRoot $relative) -Destination $destination -Force
                 if ((Get-Hash $destination) -ne $before[$relative]) { throw "Rollback verification failed for $relative. Backup: $backupRoot" }
             }

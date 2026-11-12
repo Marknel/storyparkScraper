@@ -54,14 +54,15 @@ by default. Use an SSH tunnel for another machine. An explicit `--host` and
 by ordinary syncs or by the status webserver.
 
 Login does not change `runtime.enabled`. If the installation is paused, leave it
-paused while renewing the profile, then enable it for a capped acceptance run:
+paused while renewing the profile. An explicit manual override allows a capped
+acceptance run while the overnight schedule stays paused:
 
 ```powershell
-.\.venv\Scripts\python.exe -m storypark_scraper --config .\config.yaml run --max-stories 3 --max-stories-per-child 1 --story-delay-seconds 2
+.\.venv\Scripts\python.exe -m storypark_scraper --config .\config.yaml run --allow-paused --max-stories 3 --max-stories-per-child 1 --story-delay-seconds 2
 ```
 
 Verify the resulting status, story Markdown and media, then repeat to check session
-reuse and deduplication before relying on the overnight schedule. Browser profiles,
+reuse and deduplication before setting `runtime.enabled: true` for the overnight schedule. Browser profiles,
 credentials, verification codes and private login-assist links must stay out of
 Git and CI artifacts. Never run login concurrently with sync: both use the same
 profile lock.

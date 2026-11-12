@@ -43,10 +43,11 @@ class StoryparkApplication:
         max_stories_per_child: int | None = None,
         story_delay_seconds: float | None = None,
         disable_filters: bool = False,
+        allow_paused: bool = False,
     ) -> int:
         self._config.ensure_directories()
         self._state.initialize()
-        if not self._config.runtime.enabled:
+        if not self._config.runtime.enabled and not allow_paused:
             try:
                 self._logger.info("Scraper sync is paused (runtime.enabled=false); skipping run.")
                 status_payload = build_status_payload(self._state, state="paused")
