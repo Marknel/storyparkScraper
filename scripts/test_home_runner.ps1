@@ -104,5 +104,6 @@ try{Get-ScraperTaskAccounts -Tasks @($missingPrincipal) -Python $python -TargetR
 if(-not $rejected){throw 'Matching task with missing identity was silently accepted'}
 $results += @{case='matching-task-missing-identity-rejected';passed=$true}
 $results | ConvertTo-Json -Depth 4
-
-
+# The missing-credential fixture intentionally sets LASTEXITCODE=1. Report the
+# assertions' result rather than letting CI inherit that synthetic native status.
+exit 0
