@@ -1,22 +1,45 @@
 from __future__ import annotations
 
 from typing import Callable
+import platform
 import re
-from urllib.parse import quote, urljoin
+import time
+from urllib.parse import quote, urljoin, urlsplit
 
 from storypark_scraper.config import AppConfig
+from storypark_scraper.credentials import CredentialError
 from storypark_scraper.models import ChildTarget, Credentials, StoryContent
 from storypark_scraper.parsing import parse_child_targets_from_html, parse_story_from_html, parse_story_ids_from_html
 
 
-LOGIN_TITLE_SNIPPET = "Log in"
-MAIN_MENU_SELECTOR = "[data-action='open-menu']"
+MAIN_MENU_SELECTOR = (
+    "[data-action='open-menu'], "
+    "button.v-btn:has(span:text-is('Menu')):not(nav button)"
+)
 CHILD_MENU_SELECTOR = "[data-action='child-menu']"
 CHILD_MENU_LABEL_SELECTOR = "[data-action='open-child-menu'], .v-list-item__title, .v-list-item-title"
 CHILD_STORIES_LINK_SELECTOR = "a[href*='/children/'][href$='/stories']"
 USERNAME_SELECTOR = "#user_email"
 PASSWORD_SELECTOR = "#user_password"
-SUBMIT_SELECTOR = ".sp-c-btn.sp-c-btn--med.sp-c-primary-btn.sp-c-primary-btn--lg.sp-u-padding-horizontal--med[data-action='signin']"
+SUBMIT_SELECTOR = "button[data-action='signin']"
+
+
+class AuthenticationRequired(RuntimeError):
+    """The account owner must renew the persistent browser session."""
+
+
+def build_user_agent(browser_version: str) -> str:
+    """Match Chromium in both headed/headless modes (adapted from upstream 1.1)."""
+    system = platform.system()
+    os_part = {
+        "Windows": "Windows NT 10.0; Win64; x64",
+        "Darwin": "Macintosh; Intel Mac OS X 10_15_7",
+    }.get(system, "X11; Linux x86_64")
+    major = browser_version.split(".")[0]
+    return (
+        f"Mozilla/5.0 ({os_part}) AppleWebKit/537.36 (KHTML, like Gecko) "
+        f"Chrome/{major}.0.0.0 Safari/537.36"
+    )
 
 
 class StoryparkBrowser:
@@ -25,6 +48,8 @@ class StoryparkBrowser:
         config: AppConfig,
         credential_provider: Callable[[], Credentials],
         logger,
+        *,
+        headless: bool = True,
     ):
         self._config = config
         self._credential_provider = credential_provider
@@ -32,18 +57,35 @@ class StoryparkBrowser:
         self._playwright = None
         self._context = None
         self._page = None
+        self._headless = headless
+        self._user_agent = config.runtime.user_agent
 
     def __enter__(self):
         sync_playwright = _require_sync_playwright()
         self._playwright = sync_playwright().start()
-        self._context = self._playwright.chromium.launch_persistent_context(
-            user_data_dir=str(self._config.paths.browser_profile),
-            headless=True,
-            user_agent=self._config.runtime.user_agent,
-        )
-        self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
-        self._page.set_default_timeout(self._config.runtime.page_timeout_ms)
-        return self
+        try:
+            if not self._user_agent:
+                # Query the installed engine instead of maintaining a stale UA constant.
+                probe = self._playwright.chromium.launch(headless=True)
+                try:
+                    self._user_agent = build_user_agent(probe.version)
+                finally:
+                    probe.close()
+            self._context = self._playwright.chromium.launch_persistent_context(
+                user_data_dir=str(self._config.paths.browser_profile),
+                headless=self._headless,
+                user_agent=self._user_agent,
+                viewport={"width": 1280, "height": 900},
+            )
+            self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
+            self._page.set_default_timeout(self._config.runtime.page_timeout_ms)
+            return self
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+
+    def get_user_agent(self) -> str:
+        return self._user_agent
 
     def get_cookies(self) -> list[dict]:
         if self._context is not None:
@@ -51,15 +93,35 @@ class StoryparkBrowser:
         return []
 
     def __exit__(self, exc_type, exc, tb):
-        if self._context is not None:
-            self._context.close()
-        if self._playwright is not None:
-            self._playwright.stop()
+        try:
+            if self._context is not None:
+                self._context.close()
+        finally:
+            self._context = None
+            if self._playwright is not None:
+                self._playwright.stop()
+                self._playwright = None
+
+    def authenticate(
+        self, *, interactive: bool = False, timeout_seconds: int | None = None,
+        assist: bool = False, host: str | None = None, port: int | None = None,
+        on_ready: Callable[[str], None] | None = None,
+    ) -> None:
+        """Establish a verified session; only explicit login permits human interaction."""
+        self._ensure_authenticated(
+            interactive=interactive,
+            timeout_seconds=timeout_seconds,
+            assist=assist,
+            host=host,
+            port=port,
+            on_ready=on_ready,
+        )
 
     def discover_children(self) -> list[ChildTarget]:
         self._ensure_authenticated()
-        self._page.goto(self._config.storypark.login_url)
-        menu_button = self._page.locator(MAIN_MENU_SELECTOR).first
+        menu_button = self._visible_element(MAIN_MENU_SELECTOR)
+        if menu_button is None:
+            raise AuthenticationRequired("Storypark's authenticated menu is unavailable; renew the session with the login command.")
         menu_button.wait_for(state="visible", timeout=self._config.runtime.page_timeout_ms)
         menu_button.click()
         try:
@@ -135,7 +197,7 @@ class StoryparkBrowser:
 
             stories_links = group.locator(CHILD_STORIES_LINK_SELECTOR)
             if stories_links.count() == 0:
-                header = group.locator("[data-action='open-child-menu']").first
+                header = group.locator("[data-action='open-child-menu'], .v-list-group__header").first
                 if header.count() > 0:
                     try:
                         header.click()
@@ -164,35 +226,129 @@ class StoryparkBrowser:
             seen_codes.add(code)
         return children
 
-    def _ensure_authenticated(self) -> None:
+    def _ensure_authenticated(
+        self, *, interactive: bool = False, timeout_seconds: int | None = None,
+        assist: bool = False, host: str | None = None, port: int | None = None,
+        on_ready: Callable[[str], None] | None = None,
+    ) -> None:
         self._page.goto(self._config.storypark.login_url)
-        if not self._is_login_page():
+        if self._wait_for_login_state():
             return
-        credentials = self._credential_provider()
-        self._logger.info("Authenticating to Storypark", extra={"credential_source": credentials.source})
-        self._page.fill(USERNAME_SELECTOR, credentials.username)
-        self._page.fill(PASSWORD_SELECTOR, credentials.password)
-        self._page.click(SUBMIT_SELECTOR)
+        if self._has_login_fields():
+            try:
+                credentials = self._credential_provider()
+            except CredentialError:
+                if not interactive:
+                    raise
+            else:
+                self._logger.info("Authenticating to Storypark", extra={"credential_source": credentials.source})
+                try:
+                    form_timeout = min(5000, self._config.runtime.page_timeout_ms)
+                    self._visible_element(USERNAME_SELECTOR).fill(credentials.username, timeout=form_timeout)
+                    self._visible_element(PASSWORD_SELECTOR).fill(credentials.password, timeout=form_timeout)
+                    self._visible_element(SUBMIT_SELECTOR).click(timeout=form_timeout)
+                except Exception:
+                    # Playwright call logs may contain a fill/type argument. Do not
+                    # allow credentials into tracebacks, telemetry or status JSON.
+                    if not interactive:
+                        raise AuthenticationRequired(
+                            "The Storypark sign-in form changed or was unavailable. Renew the session with the login command."
+                        ) from None
+                    # A CAPTCHA can deliberately disable submit. The owner must
+                    # still be able to reach the assist view and finish the form.
+                else:
+                    if self._wait_until_authenticated(15):
+                        return
+        if not interactive:
+            raise AuthenticationRequired(
+                "Storypark sign-in needs the account owner (CAPTCHA, MFA or an expired session). "
+                "Run 'python -m storypark_scraper --config <config.yaml> login' on the scraper host "
+                "under the scheduled-task account, then retry the sync. Use 'login --headless' on a headless host."
+            )
+        timeout = timeout_seconds if timeout_seconds is not None else self._config.runtime.auth_timeout_seconds
+        if timeout <= 0:
+            raise ValueError("Authentication timeout must be greater than zero")
+        if assist:
+            from storypark_scraper.auth_assist import wait_for_user
+            try:
+                wait_for_user(
+                    self._page, lambda page: self._is_authenticated(),
+                    host=host if host is not None else self._config.runtime.auth_assist_host,
+                    port=port if port is not None else self._config.runtime.auth_assist_port,
+                    timeout=timeout, on_ready=on_ready,
+                )
+            except TimeoutError as exc:
+                raise AuthenticationRequired("Timed out waiting for the owner to complete Storypark sign-in.") from exc
+            except AuthenticationRequired:
+                raise
+            except Exception:
+                raise AuthenticationRequired(
+                    "Storypark login assistance stopped. Retry the login command and complete the verification."
+                ) from None
+        elif not self._wait_until_authenticated(timeout):
+            raise AuthenticationRequired("Timed out waiting for the owner to complete Storypark sign-in.")
+        if not self._is_authenticated():
+            raise AuthenticationRequired("Storypark sign-in was not verified; retry the login command.")
+
+    def _same_origin(self) -> bool:
+        expected = urlsplit(self._config.storypark.login_url)
+        current = urlsplit(self._page.url)
+        return (current.scheme, current.netloc) == (expected.scheme, expected.netloc)
+
+    def _has_login_fields(self) -> bool:
+        return self._same_origin() and self._visible(USERNAME_SELECTOR) and self._visible(PASSWORD_SELECTOR)
+
+    def _visible(self, selector: str) -> bool:
+        return self._visible_element(selector) is not None
+
+    def _visible_element(self, selector: str):
         try:
-            self._page.wait_for_load_state("networkidle", timeout=15000)
+            elements = self._page.locator(selector)
+            for index in range(elements.count()):
+                element = elements.nth(index)
+                if element.is_visible():
+                    return element
         except Exception:
             pass
-        if self._is_login_page():
-            self._page.wait_for_timeout(2000)
-            if self._is_login_page():
-                raise RuntimeError("Storypark login did not complete successfully")
+        return None
+
+    def _is_authenticated(self) -> bool:
+        if self._page.is_closed():
+            raise AuthenticationRequired("The Storypark login window was closed before sign-in completed.")
+        return (
+            self._same_origin()
+            and not urlsplit(self._page.url).path.startswith("/users/")
+            and self._visible(MAIN_MENU_SELECTOR)
+        )
+
+    def _wait_until_authenticated(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while True:
+            if self._is_authenticated():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            self._auth_pause()
+
+    def _auth_pause(self) -> None:
+        try:
+            self._page.wait_for_timeout(250)
+        except Exception:
+            raise AuthenticationRequired(
+                "The Storypark sign-in window closed or became unavailable. Retry the login command."
+            ) from None
+
+    def _wait_for_login_state(self) -> bool:
+        deadline = time.monotonic() + min(10, self._config.runtime.page_timeout_ms / 1000)
+        while True:
+            if self._is_authenticated():
+                return True
+            if self._has_login_fields() or time.monotonic() >= deadline:
+                return False
+            self._auth_pause()
 
     def _is_login_page(self) -> bool:
-        try:
-            title = self._page.title()
-        except Exception:
-            title = ""
-        if LOGIN_TITLE_SNIPPET.lower() in title.lower():
-            return True
-        try:
-            return self._page.locator(USERNAME_SELECTOR).count() > 0
-        except Exception:
-            return False
+        return not self._is_authenticated()
 
 
 def _build_story_detail_url(child: ChildTarget, story_id: str) -> str:
