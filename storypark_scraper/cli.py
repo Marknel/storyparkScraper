@@ -211,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
                 status=args.status or status_payload.get("state", "idle"),
                 problem=(args.status or status_payload.get("state")) in {"failed", "interrupted"},
                 last_run=last_run,
+                last_success_at=status_payload["last_success_at"],
                 duration_seconds=0.0,
                 stories_total=stories_total,
                 photos_total=photos_total,

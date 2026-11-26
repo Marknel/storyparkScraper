@@ -90,11 +90,12 @@ class CliTests(unittest.TestCase):
         self.assertIn("login command", error.getvalue())
 
     def test_mqtt_override_controls_both_status_and_problem_flag(self):
+        last_success = "2026-09-09T17:00:00+00:00"
         for status, problem in [("success", False), ("failed", True), ("interrupted", True), ("paused", False)]:
             with self.subTest(status=status), \
                  patch("storypark_scraper.cli.load_config") as config, \
                  patch("storypark_scraper.cli.StateStore") as store, \
-                 patch("storypark_scraper.cli.build_status_payload", return_value={"state": "failed"}), \
+                 patch("storypark_scraper.cli.build_status_payload", return_value={"state": "failed", "last_success_at": last_success}), \
                  patch("storypark_scraper.mqtt.HomeAssistantMQTTPublisher") as publisher, \
                  patch("storypark_scraper.mqtt.build_telemetry_payload") as payload, redirect_stdout(StringIO()):
                 store.return_value.get_total_counts.return_value = (1, 2)
@@ -102,6 +103,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(main(["mqtt-publish", "--status", status]), 0)
                 self.assertEqual(payload.call_args.kwargs["status"], status)
                 self.assertEqual(payload.call_args.kwargs["problem"], problem)
+                self.assertEqual(payload.call_args.kwargs["last_success_at"], last_success)
 
 
 if __name__ == "__main__":

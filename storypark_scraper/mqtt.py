@@ -91,6 +91,21 @@ def build_discovery_payloads(
         },
     ))
 
+    # Historical success remains useful even when the scraper is offline.
+    payloads.append((
+        f"{discovery_prefix}/sensor/storypark_last_success/config",
+        {
+            "device": device,
+            "has_entity_name": True,
+            "name": "Last Success",
+            "unique_id": "storypark_scraper_last_success",
+            "state_topic": state_topic,
+            "value_template": "{{ value_json.last_success_at | default(none, true) }}",
+            "device_class": "timestamp",
+            "icon": "mdi:clock-check-outline",
+        },
+    ))
+
     # 4. Last Run Duration
     payloads.append((
         f"{discovery_prefix}/sensor/storypark_last_run_duration/config",
@@ -183,6 +198,8 @@ def build_telemetry_payload(
     last_run_photos: int = 0,
     children_stats: dict[str, Any] | None = None,
     error: str | None = None,
+    *,
+    last_success_at: str | None = None,
 ) -> dict[str, Any]:
     formatted_children: dict[str, dict[str, int]] = {}
     if children_stats:
@@ -196,6 +213,7 @@ def build_telemetry_payload(
         "status": status,
         "problem": "ON" if problem else "OFF",
         "last_run": last_run,
+        "last_success_at": last_success_at,
         "duration_seconds": round(duration_seconds, 2),
         "stories_total": stories_total,
         "photos_total": photos_total,
