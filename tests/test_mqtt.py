@@ -34,6 +34,7 @@ class MQTTTests(unittest.TestCase):
         self.assertIn("homeassistant/sensor/storypark_status/config", topics)
         self.assertIn("homeassistant/binary_sensor/storypark_problem/config", topics)
         self.assertIn("homeassistant/sensor/storypark_last_run/config", topics)
+        self.assertIn("homeassistant/sensor/storypark_last_success/config", topics)
         self.assertIn("homeassistant/sensor/storypark_last_run_duration/config", topics)
         self.assertIn("homeassistant/sensor/storypark_stories_total/config", topics)
         self.assertIn("homeassistant/sensor/storypark_photos_total/config", topics)
@@ -53,6 +54,12 @@ class MQTTTests(unittest.TestCase):
         self.assertEqual(problem_payload["payload_off"], "OFF")
         self.assertEqual(problem_payload["device"]["name"], "Storypark Scraper")
         self.assertEqual(problem_payload["availability_topic"], "storypark/availability")
+
+        success_payload = dict(payloads)["homeassistant/sensor/storypark_last_success/config"]
+        self.assertEqual(success_payload["unique_id"], "storypark_scraper_last_success")
+        self.assertEqual(success_payload["device_class"], "timestamp")
+        self.assertEqual(success_payload["state_topic"], "storypark/state")
+        self.assertNotIn("availability_topic", success_payload)
 
         # Inspect duration sensor
         duration_payload = next(p for t, p in payloads if "storypark_last_run_duration" in t)
@@ -105,6 +112,7 @@ class MQTTTests(unittest.TestCase):
         self.assertEqual(telemetry["stories_total"], 434)
         self.assertEqual(telemetry["children"]["Samuel Cracknell"]["stories"], 369)
         self.assertIsNone(telemetry["error"])
+        self.assertIsNone(telemetry["last_success_at"])
 
     def test_build_telemetry_payload_failure(self):
         telemetry = build_telemetry_payload(

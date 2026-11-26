@@ -64,6 +64,7 @@ class StoryparkApplication:
                         status="paused",
                         problem=False,
                         last_run=str(last_run),
+                        last_success_at=status_payload["last_success_at"],
                         duration_seconds=0.0,
                         stories_total=stories_total,
                         photos_total=photos_total,
@@ -116,7 +117,12 @@ class StoryparkApplication:
                     build_status_payload(self._state, state="running", stats=stats, last_error=None),
                 )
                 self._mqtt.publish_telemetry(
-                    build_telemetry_payload(status="running", problem=False, last_run=utc_now_iso())
+                    build_telemetry_payload(
+                        status="running",
+                        problem=False,
+                        last_run=utc_now_iso(),
+                        last_success_at=self._state.get_last_success_at(),
+                    )
                 )
                 self._logger.info(
                     "Starting scraper run",
@@ -280,6 +286,7 @@ class StoryparkApplication:
                         status="success",
                         problem=False,
                         last_run=utc_now_iso(),
+                        last_success_at=status_payload["last_success_at"],
                         duration_seconds=duration,
                         stories_total=stories_total,
                         photos_total=photos_total,
@@ -304,7 +311,9 @@ class StoryparkApplication:
                     build_status_payload(self._state, state="failed", stats=stats, last_error=str(exc)),
                 )
             stories_total, photos_total = (0, 0)
+            last_success_at = None
             try:
+                last_success_at = self._state.get_last_success_at()
                 stories_total, photos_total = self._state.get_total_counts()
             except Exception:
                 pass
@@ -313,6 +322,7 @@ class StoryparkApplication:
                     status="failed",
                     problem=True,
                     last_run=utc_now_iso(),
+                    last_success_at=last_success_at,
                     duration_seconds=time.time() - start_time,
                     stories_total=stories_total,
                     photos_total=photos_total,

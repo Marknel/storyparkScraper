@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from storypark_scraper.app import StoryparkApplication, _is_google_photos_candidate
+from storypark_scraper.browser import AuthenticationRequired
 from storypark_scraper.models import ChildTarget, Credentials, ExportResult, StoryAsset, StoryContent
 
 
@@ -89,6 +90,10 @@ class AppRunTests(unittest.TestCase):
 
         store = StateStore(root / "state" / "state.sqlite")
         store.initialize()
+        with patch("storypark_scraper.state.utc_now_iso", return_value="2026-09-09T17:00:00+00:00"):
+            successful_run = store.start_run()
+            store.finish_run(successful_run, "success", RunStats(), None, None)
+        last_success = store.get_last_success_at()
         run_id = store.start_run()
         store.finish_run(run_id, "failed", RunStats(), None, "Interactive sign-in required")
         previous_run = store.get_latest_run()
@@ -116,6 +121,7 @@ class AppRunTests(unittest.TestCase):
         self.assertEqual(telemetry["status"], "paused")
         self.assertEqual(telemetry["problem"], "OFF")
         self.assertEqual(telemetry["last_run"], previous_run["finished_at"])
+        self.assertEqual(telemetry["last_success_at"], last_success)
         self.assertIsNone(telemetry["error"])
 
         status_payload = json.loads((root / "status" / "status.json").read_text(encoding="utf-8"))
@@ -131,6 +137,34 @@ class AppRunTests(unittest.TestCase):
             self.assertEqual(latest_run["last_error"], "Interactive sign-in required")
         finally:
             store.close()
+
+    def test_failed_scan_keeps_last_success_in_running_and_failed_telemetry(self):
+        from storypark_scraper.models import RunStats
+        from storypark_scraper.state import StateStore
+
+        root = prepare_case_dir("app_failed_telemetry")
+        config_path = root / "config.yaml"
+        config_path.write_text("{}\n", encoding="utf-8")
+        last_success = "2026-09-09T17:00:00+00:00"
+        store = StateStore(root / "state" / "state.sqlite")
+        store.initialize()
+        with patch("storypark_scraper.state.utc_now_iso", return_value=last_success):
+            run_id = store.start_run()
+            store.finish_run(run_id, "success", RunStats(), None, None)
+        store.close()
+
+        logger = MagicMock()
+        with patch("storypark_scraper.app.StoryparkBrowser") as browser:
+            browser.return_value.__enter__.return_value.discover_children.side_effect = AuthenticationRequired("Sign-in required")
+            app = StoryparkApplication(config_path, logger)
+            app._mqtt = publisher = MagicMock()
+            with self.assertRaises(AuthenticationRequired):
+                app.run()
+
+        telemetry = [call.args[0] for call in publisher.publish_telemetry.call_args_list]
+        self.assertEqual([item["status"] for item in telemetry], ["running", "failed"])
+        self.assertTrue(all(item["last_success_at"] == last_success for item in telemetry))
+        self.assertNotEqual(telemetry[-1]["last_run"], last_success)
 
     def test_media_downloads_use_authenticated_and_renewed_browser_session(self):
         self._assert_media_session_handoff()
@@ -259,6 +293,7 @@ google_photos:
         ), patch("storypark_scraper.app.time.sleep") as sleep_mock:
             app = StoryparkApplication(config_path, logger)
             app._archive_writer = FakeArchiveWriter(root / "archive")
+            app._mqtt = publisher = MagicMock()
             result = app.run(full_scan=True, max_stories=3, story_delay_seconds=2.0)
 
         self.assertEqual(result, 0)
@@ -269,6 +304,10 @@ google_photos:
         self.assertEqual(status_payload["stories_downloaded"], 3)
         self.assertEqual(status_payload["stories_seen"], 3)
         self.assertEqual(status_payload["state"], "success")
+        self.assertEqual(
+            publisher.publish_telemetry.call_args.args[0]["last_success_at"],
+            status_payload["last_run_finished_at"],
+        )
 
     def test_google_photos_candidate_requires_story_children_to_be_subset_of_known_children(self):
         self.assertTrue(
